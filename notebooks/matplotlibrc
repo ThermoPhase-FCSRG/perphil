@@ -1,0 +1,7 @@
+font.size: 16
+axes.titlesize: 20
+axes.labelsize: 22
+xtick.labelsize: 16
+ytick.labelsize: 16
+legend.fontsize: 16
+figure.titlesize: 16

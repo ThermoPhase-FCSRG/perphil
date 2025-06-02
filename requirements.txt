@@ -1,1 +1,6 @@
 notebook
+pre-commit
+attrs
+jupytext
+ruff
+nb-clean
