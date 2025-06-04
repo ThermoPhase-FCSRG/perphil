@@ -1,9 +1,8 @@
 import os
 import sys
+import platform
 from invoke import task, exceptions, Exit
 from rich import print
-import platform
-
 
 _HOST_SYSTEM = platform.system()
 _SUPPORTED_SYSTEMS = (
@@ -87,19 +86,23 @@ def download_firedrake_configure(c):
 
 @task(pre=[download_firedrake_configure])
 def install_system_packages(c):
+    """
+    Install all system-level dependencies that firedrake-configure recommends, plus
+    ensure OpenMPI development headers are present on Linux.
+    """
     system = platform.system()
     if system == "Linux":
         print("Detected Linux. Installing system packages via apt …")
-        # Use c.run with pty=True so sudo can read your password properly
-        c.run("sudo apt update", pty=True)
         c.run(
-            "sudo apt install -y $(python3 firedrake-configure --show-system-packages)",
+            'sudo sh -c "apt update && apt install -y '
+            '$(python3 firedrake-configure --show-system-packages) libopenmpi-dev openmpi-bin"',
             pty=True,
         )
-        print("✔ System packages installed on Ubuntu.")
+        print("✔ System packages installed on Ubuntu (including OpenMPI dev).")
     elif system == "Darwin":
+        # brew never needs sudo on macOS
         print("Detected macOS. Installing system packages via brew …")
-        c.run("brew update", echo=True)  # brew never needs sudo
+        c.run("brew update", echo=True)
         c.run(
             "brew install $(python3 firedrake-configure --show-system-packages)",
             pty=True,
@@ -116,6 +119,7 @@ def install_petsc(c):
     """
     prefix = _venv_activate_prefix()
     prefix_down = f"source ../{VENV_DIR}/bin/activate && "
+
     print("Determining PETSc version from firedrake-configure …")
     result = c.run(
         f"{prefix} python3 firedrake-configure --show-petsc-version",
@@ -164,29 +168,53 @@ def install_petsc(c):
         print("Checking PETSc installation…")
         c.run(f"make PETSC_DIR=$(pwd) PETSC_ARCH={arch} check", echo=True)
 
-    # Export PETSC_DIR and PETSC_ARCH env vars
-    os.environ["PETSC_DIR"] = petsc_dir
+    # Export PETSC_DIR and PETSC_ARCH so that subsequent steps see them:
+    abs_petsc = os.path.abspath(petsc_dir)
+    os.environ["PETSC_DIR"] = abs_petsc
     os.environ["PETSC_ARCH"] = arch
-    print(f"→ Exported PETSC_DIR={petsc_dir}")
-    print(f"→ Exported PETSC_ARCH={arch}")
 
-    print(f"✔ PETSc built.  PETSC_DIR: './{petsc_dir}', PETSC_ARCH: '{arch}'.")
+    print(f"→ Exported PETSC_DIR={abs_petsc}")
+    print(f"→ Exported PETSC_ARCH={arch}")
+    print(f"✔ PETSc built.  PETSC_DIR: '{abs_petsc}', PETSC_ARCH: '{arch}'.")
 
 
 @task(pre=[install_petsc])
 def install_firedrake(c):
     """
-    Install the Firedrake Python package inside the venv via pip.
+    Install the Firedrake Python package (with [check]) inside the venv via pip.
+    We explicitly pass PETSC_DIR and PETSC_ARCH (from install_petsc) so that petsc4py
+    can find the correct build.
     """
     prefix = _venv_activate_prefix()
+
+    # Grab exactly what install_petsc set earlier in os.environ:
+    petsc_dir = os.environ.get("PETSC_DIR", "").strip()
+    petsc_arch = os.environ.get("PETSC_ARCH", "").strip()
+    if not petsc_dir or not petsc_arch:
+        raise Exit(
+            "PETSC_DIR and PETSC_ARCH must be set by install_petsc before installing Firedrake."
+        )
+
     print("Installing Firedrake in the virtualenv …")
-    c.run(f"{prefix} export $(python3 firedrake-configure --show-env)", pty=True, echo=True)
-    c.run(f"{prefix} pip cache remove petsc4py", pty=True, echo=True)
-    c.run(f"{prefix} pip cache remove firedrake", pty=True, echo=True)
-    c.run(f"{prefix} echo 'Cython<3.1' > constraints.txt", pty=True, echo=True)
-    c.run(f"{prefix} export PIP_CONSTRAINT=constraints.txt", pty=True, echo=True)
-    c.run(f"{prefix} pip install --no-binary h5py 'firedrake[check]'", pty=True, echo=True)
-    c.run("export PIP_CONSTRAINT=", pty=True, echo=True)
+
+    # Pin Cython < 3.1 in constraints.txt:
+    c.run("echo 'Cython<3.1' > constraints.txt", echo=True)
+    os.environ["PIP_CONSTRAINT"] = "constraints.txt"
+
+    # Now call pip install, making sure PETSC_DIR/PETSC_ARCH/CC/CXX/HDF5_MPI are exported.
+    # NOTE: PETSC_DIR must be absolute, otherwise petsc4py's build script will look in /tmp/…
+    cmd = (
+        f"{prefix}"
+        f"PETSC_DIR={petsc_dir} PETSC_ARCH={petsc_arch} "
+        f"CC=mpicc CXX=mpicxx HDF5_MPI=ON "
+        f"pip install --no-binary h5py 'firedrake[check]'"
+    )
+
+    c.run(cmd, pty=True, echo=True)
+
+    # Clean up constraint file:
+    os.environ.pop("PIP_CONSTRAINT", None)
+
     print("\nVerifying the installation …")
     try:
         c.run(f"{prefix} firedrake-check", echo=True, pty=True)
@@ -200,16 +228,20 @@ def clean(c):
     """
     Remove the virtualenv, PETSc build directory, and any downloaded scripts.
     """
-    if os.path.isdir("petsc-*"):
+    # Remove any petsc-* directories:
+    if any(name.startswith("petsc-") and os.path.isdir(name) for name in os.listdir(".")):
         print("Removing any 'petsc-*' directories …")
         c.run("rm -rf petsc-*", echo=True)
         c.run("pip uninstall -y petsc4py", echo=True)
         c.run("pip cache remove petsc4py", echo=True)
+
+    # Remove firedrake-configure script if present:
     for fname in ["firedrake-configure"]:
         if os.path.isfile(fname):
             print(f"Removing '{fname}' …")
             c.run(f"rm -f {fname}", echo=True)
 
+    # Uninstall any leftover Python packages:
     c.run("pip cache remove firedrake", echo=True)
     c.run("pip uninstall -y h5py mpi4py", echo=True)
     c.run("pip cache purge", echo=True)
