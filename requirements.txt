@@ -4,3 +4,4 @@ attrs
 jupytext
 ruff
 nb-clean
+invoke
