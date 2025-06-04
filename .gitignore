@@ -196,3 +196,4 @@ cython_debug/
 # Repo specifics
 firedrake-configure
 constraints.txt
+petsc-*/

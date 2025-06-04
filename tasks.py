@@ -42,6 +42,8 @@ def create_venv(c):
     """
     Create a Python 3.10+ virtualenv in ./.venv if it does not already exist.
     """
+    _platform_sanity_check()
+
     if os.path.isdir(VENV_DIR):
         print(f"Virtualenv already exists at '{VENV_DIR}/'")
         return
@@ -50,10 +52,10 @@ def create_venv(c):
     if ver < (3, 10):
         raise Exit(f"Python 3.10+ is required (found {ver[0]}.{ver[1]}).")
 
-    print(f"Creating virtualenv in '{VENV_DIR}/' …")
+    _task_screen_log(f"Creating virtualenv in '{VENV_DIR}/' …")
     c.run(f"python3 -m venv {VENV_DIR}", pty=True)
     c.run(f"{_venv_activate_prefix()} pip install --upgrade pip setuptools wheel", pty=True)
-    print("✔ Virtualenv created.")
+    _task_screen_log("✔ Virtualenv created.", color="yellow")
 
 
 @task(pre=[create_venv])
@@ -64,9 +66,9 @@ def install_deps(c):
     requirements_file = "requirements.txt"
     if not os.path.isfile(requirements_file):
         raise Exit(f"Could not find {requirements_file!r} in the project root.")
-    print(f"Installing Python dependencies from {requirements_file} …")
+    _task_screen_log(f"Installing Python dependencies from {requirements_file} …")
     c.run(f"{_venv_activate_prefix()} pip install -r {requirements_file}", pty=True)
-    print("✔ Python-level dependencies installed.")
+    _task_screen_log("✔ Python-level dependencies installed.", color="yellow")
 
 
 @task(pre=[install_deps])
@@ -78,10 +80,10 @@ def download_firedrake_configure(c):
         "https://raw.githubusercontent.com/"
         "firedrakeproject/firedrake/refs/tags/2025.4.0.post0/scripts/firedrake-configure"
     )
-    print("Downloading firedrake-configure …")
+    _task_screen_log("Downloading firedrake-configure …")
     c.run(f"curl -fsSL {url} -o firedrake-configure")
     c.run("chmod +x firedrake-configure")
-    print("✔ firedrake-configure downloaded.")
+    _task_screen_log("✔ firedrake-configure downloaded.", color="yellow")
 
 
 @task(pre=[download_firedrake_configure])
@@ -92,22 +94,24 @@ def install_system_packages(c):
     """
     system = platform.system()
     if system == "Linux":
-        print("Detected Linux. Installing system packages via apt …")
+        _task_screen_log("Detected Linux. Installing system packages via apt …")
         c.run(
             'sudo sh -c "apt update && apt install -y '
             '$(python3 firedrake-configure --show-system-packages) libopenmpi-dev openmpi-bin"',
             pty=True,
         )
-        print("✔ System packages installed on Ubuntu (including OpenMPI dev).")
+        _task_screen_log(
+            "✔ System packages installed on Ubuntu (including OpenMPI dev).", color="yellow"
+        )
     elif system == "Darwin":
         # brew never needs sudo on macOS
-        print("Detected macOS. Installing system packages via brew …")
+        _task_screen_log("Detected macOS. Installing system packages via brew …")
         c.run("brew update", echo=True)
         c.run(
             "brew install $(python3 firedrake-configure --show-system-packages)",
             pty=True,
         )
-        print("✔ System packages installed on macOS.")
+        _task_screen_log("✔ System packages installed on macOS.", color="yellow")
     else:
         raise Exit(f"Unsupported OS: {system}. Please install system packages manually.")
 
@@ -119,6 +123,8 @@ def install_petsc(c):
     """
     prefix = _venv_activate_prefix()
     prefix_down = f"source ../{VENV_DIR}/bin/activate && "
+
+    _task_screen_log("Installing PETSc")
 
     print("Determining PETSc version from firedrake-configure …")
     result = c.run(
@@ -175,7 +181,9 @@ def install_petsc(c):
 
     print(f"→ Exported PETSC_DIR={abs_petsc}")
     print(f"→ Exported PETSC_ARCH={arch}")
-    print(f"✔ PETSc built.  PETSC_DIR: '{abs_petsc}', PETSC_ARCH: '{arch}'.")
+    _task_screen_log(
+        f"✔ PETSc built.  PETSC_DIR: '{abs_petsc}', PETSC_ARCH: '{arch}'.", color="yellow"
+    )
 
 
 @task(pre=[install_petsc])
@@ -195,7 +203,7 @@ def install_firedrake(c):
             "PETSC_DIR and PETSC_ARCH must be set by install_petsc before installing Firedrake."
         )
 
-    print("Installing Firedrake in the virtualenv …")
+    _task_screen_log("Installing Firedrake in the virtualenv …")
 
     # Pin Cython < 3.1 in constraints.txt:
     c.run("echo 'Cython<3.1' > constraints.txt", echo=True)
@@ -218,7 +226,7 @@ def install_firedrake(c):
     print("\nVerifying the installation …")
     try:
         c.run(f"{prefix} firedrake-check", echo=True, pty=True)
-        print("✔ Firedrake installed successfully.")
+        _task_screen_log("✔ Firedrake installed successfully.", color="yellow")
     except Exception as e:
         raise Exit(f"Failed to import Firedrake: {e}")
 
@@ -228,6 +236,7 @@ def clean(c):
     """
     Remove the virtualenv, PETSc build directory, and any downloaded scripts.
     """
+    _task_screen_log("Cleaning installation artifacts")
     # Remove any petsc-* directories:
     if any(name.startswith("petsc-") and os.path.isdir(name) for name in os.listdir(".")):
         print("Removing any 'petsc-*' directories …")
@@ -245,4 +254,4 @@ def clean(c):
     c.run("pip cache remove firedrake", echo=True)
     c.run("pip uninstall -y h5py mpi4py", echo=True)
     c.run("pip cache purge", echo=True)
-    print("✔ Cleanup complete.")
+    _task_screen_log("✔ Cleanup complete.", color="yellow")
