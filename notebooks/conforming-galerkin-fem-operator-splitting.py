@@ -81,42 +81,42 @@ u2_expr = fd.as_vector(
 p2_expr = (mu / pi) * exp(pi * x) * sin(pi * y) + (mu / (beta * k2)) * exp(eta * y)
 
 # 4) Now interpolate each analytic expression into a Firedrake Function:
-u1 = fd.Function(V, name="u1_analytic")
-u1.interpolate(u1_expr)
+u1_exact = fd.Function(V, name="u1_analytic")
+u1_exact.interpolate(u1_expr)
 
-p1 = fd.Function(Q, name="p1_analytic")
-p1.interpolate(p1_expr)
+p1_exact = fd.Function(Q, name="p1_analytic")
+p1_exact.interpolate(p1_expr)
 
-u2 = fd.Function(V, name="u2_analytic")
-u2.interpolate(u2_expr)
+u2_exact = fd.Function(V, name="u2_analytic")
+u2_exact.interpolate(u2_expr)
 
-p2 = fd.Function(Q, name="p2_analytic")
-p2.interpolate(p2_expr)
+p2_exact = fd.Function(Q, name="p2_analytic")
+p2_exact.interpolate(p2_expr)
 
 # %%
 fig, axes = plt.subplots()
-contours = fd.tricontourf(p1, axes=axes, cmap="inferno")
+contours = fd.tricontourf(p1_exact, axes=axes, cmap="inferno")
 axes.set_aspect("equal")
 axes.set_title(r"$p_1$ scalar field")
 fig.colorbar(contours)
 plt.show()
 
 fig, axes = plt.subplots()
-contours = fd.tricontourf(p2, axes=axes, cmap="inferno")
+contours = fd.tricontourf(p2_exact, axes=axes, cmap="inferno")
 axes.set_aspect("equal")
 axes.set_title(r"$p_2$ scalar field")
 fig.colorbar(contours)
 plt.show()
 
 fig, axes = plt.subplots()
-contours = fd.quiver(u1, axes=axes, cmap="inferno")
+contours = fd.quiver(u1_exact, axes=axes, cmap="inferno")
 axes.set_aspect("equal")
 axes.set_title(r"$u_1$ vector field")
 fig.colorbar(contours)
 plt.show()
 
 fig, axes = plt.subplots()
-contours = fd.quiver(u2, axes=axes, cmap="inferno")
+contours = fd.quiver(u2_exact, axes=axes, cmap="inferno")
 axes.set_aspect("equal")
 axes.set_title(r"$u_2$ vector field")
 fig.colorbar(contours)
