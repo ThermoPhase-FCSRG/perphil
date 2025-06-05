@@ -140,6 +140,7 @@ def install_petsc(c):
 
     petsc_repo = "https://gitlab.com/petsc/petsc.git"
     petsc_dir = f"petsc-{petsc_version}"
+    abs_petsc = os.path.abspath(petsc_dir)
     if not os.path.isdir(petsc_dir):
         print(f"Cloning PETSc {petsc_version} …")
         c.run(f"git clone --branch {petsc_version} {petsc_repo} {petsc_dir}", echo=True)
@@ -169,13 +170,12 @@ def install_petsc(c):
 
         arch = "arch-firedrake-default"
         print("Building PETSc (this may take a long time) …")
-        c.run(f"make PETSC_DIR=$(pwd) PETSC_ARCH={arch} all", echo=True)
+        c.run(f"make PETSC_DIR={abs_petsc} PETSC_ARCH={arch} all", echo=True)
 
         print("Checking PETSc installation…")
         c.run(f"make PETSC_DIR=$(pwd) PETSC_ARCH={arch} check", echo=True)
 
     # Export PETSC_DIR and PETSC_ARCH so that subsequent steps see them:
-    abs_petsc = os.path.abspath(petsc_dir)
     os.environ["PETSC_DIR"] = abs_petsc
     os.environ["PETSC_ARCH"] = arch
 
