@@ -1,9 +1,13 @@
+import glob
 import os
+from pathlib import Path
+import shlex
 import sys
 import platform
 from invoke import task, exceptions, Exit
 from rich import print
 
+_PACKAGE_NAME = "dpp-studies"
 _HOST_SYSTEM = platform.system()
 _SUPPORTED_SYSTEMS = (
     "Linux",
@@ -285,7 +289,7 @@ def install_firedrake(c):
     print("\nVerifying the installation …")
     try:
         c.run(f"{prefix} firedrake-check", echo=True, pty=True)
-        _task_screen_log("✔ Firedrake installed successfully.", color="yellow")
+        _task_screen_log("✔ Firedrake installed successfully.", color="green")
     except Exception as e:
         raise Exit(f"Failed to import Firedrake: {e}")
 
@@ -314,3 +318,90 @@ def clean(c):
     c.run("pip uninstall -y h5py mpi4py", echo=True)
     c.run("pip cache purge", echo=True)
     _task_screen_log("✔ Cleanup complete.", color="yellow")
+
+
+@task(help={"overwrite": "Reinstall git hooks overwriting the previous installation."})
+def hooks(ctx, overwrite=False):
+    """
+    Configure pre-commit in the local git.
+    """
+    task_output_message = "Installing pre-commit hooks"
+    _task_screen_log(task_output_message)
+    base_command = "pre-commit install"
+
+    if overwrite:
+        base_command += " --overwrite"
+
+    _task_screen_log(f"Running: {base_command}", color="yellow", bold=False)
+    ctx.run(base_command)
+
+
+@task(
+    pre=[hooks],
+    help={
+        "all_files": "Run git hooks in all files (may take some time)",
+        "files": "Run git hooks in a given set of files",
+        "verbose": "Run git hooks in verbose mode",
+        "from_ref": "(for usage with `--to-ref`) -- this option represents the original ref in a `from_ref...to_ref` diff expression. For `pre-push` hooks, this represents the branch you are pushing to. For `post-checkout` hooks, this represents the branch that was previously checked out.",
+        "to_ref": "(for usage with `--from-ref`) -- this option represents the destination ref in a `from_ref...to_ref` diff expression. For `pre-push` hooks, this represents the branch being pushed. For `post-checkout` hooks, this represents the branch that is now checked out.",
+    },
+)
+def run_hooks(ctx, all_files=False, verbose=False, files="", from_ref="", to_ref=""):
+    """
+    Run all the installed git hooks in all.
+    """
+    task_output_message = "Run installed git hooks"
+    _task_screen_log(task_output_message)
+    base_command = "pre-commit run"
+    if all_files:
+        base_command += " --all-files"
+
+    if verbose:
+        base_command += " --verbose"
+
+    if files != "":
+        base_command += f" --files '{files}'"
+
+    if from_ref != "":
+        base_command += f" --from-ref {from_ref}"
+
+    if to_ref != "":
+        base_command += f" --to-ref {to_ref}"
+
+    _task_screen_log(f"Running: {base_command}", color="yellow", bold=False)
+    host_system = _HOST_SYSTEM
+    if host_system not in _SUPPORTED_SYSTEMS:
+        raise exceptions.Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
+    pty_flag = True if host_system != "Windows" else False
+    ctx.run(base_command, pty=pty_flag)
+
+
+@task(
+    help={
+        "src": "Glob pattern(s) or list of .ipynb paths to pair (default: notebooks/*.ipynb)",
+        "dry": "Preview only (no files will be changed)",
+    }
+)
+def pair_ipynbs(ctx, src="notebooks/*.ipynb", dry=False):
+    """
+    Pair Jupyter notebooks with Python scripts (percent‐format).
+    """
+    _task_screen_log("Pairing notebooks with Python scripts")
+
+    # Gather files
+    if isinstance(src, str):
+        raw = glob.glob(src, recursive=True)
+    else:
+        raw = list(src)
+    notebooks = [Path(p) for p in raw if Path(p).suffix == ".ipynb"]
+    if not notebooks:
+        raise exceptions.Exit(f"No notebooks found for {src}", 1)
+
+    # Run pairing
+    for nb in notebooks:
+        print(f"{'Would pair:' if dry else 'Pairing:'} {nb}")
+        if not dry:
+            cmd = ["jupytext", "--set-formats", "ipynb,py:percent", str(nb)]
+            ctx.run(" ".join(shlex.quote(x) for x in cmd), pty=(_HOST_SYSTEM != "Windows"))
+
+    print(f"{len(notebooks)} notebook(s) {'would be paired' if dry else 'paired'}.")
