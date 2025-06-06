@@ -145,25 +145,31 @@ pressure_family = "CG"
 velocity_family = "CG"
 U = fd.VectorFunctionSpace(mesh, velocity_family, degree)
 V = fd.FunctionSpace(mesh, pressure_family, degree)
+W = V * V
 
 # Trial and test functions
-u = fd.TrialFunction(V)
-v = fd.TestFunction(V)
-
-# Exact solution
-exact_solution, sigma_e = calculate_exact_solution(
-    mesh, pressure_family, velocity_family, degree + 3, degree + 3
-)
+p1, p2 = fd.TrialFunctions(W)
+q1, q2 = fd.TestFunctions(W)
 
 # Forcing function
 f = fd.Constant(0.0)
 
 # Dirichlet BCs
-bcs = fd.DirichletBC(V, fd.project(exact_solution, V), "on_boundary")
+bc_macro = fd.DirichletBC(W.sub(0), p1_expr, "on_boundary")
+bc_micro = fd.DirichletBC(W.sub(1), p2_expr, "on_boundary")
+bcs = [bc_macro, bc_micro]
 
 # Variational form
-a = inner(grad(u), grad(v)) * dx
-L = f * v * dx
+## Mass transfer term
+xi = -beta / mu * (p1 - p2)
+
+## Macro terms
+a = (k1 / mu) * inner(grad(p1), grad(q1)) * dx - xi * q1 * dx
+L = fd.Constant(0.0) * q1 * dx
+
+## Micro terms
+a += (k2 / mu) * inner(grad(p2), grad(q2)) * dx + xi * q2 * dx
+L += fd.Constant(0.0) * q2 * dx
 
 # Solving the problem
 solver_parameters = {
@@ -172,11 +178,12 @@ solver_parameters = {
     "pc_type": "lu",
     "pc_factor_mat_solver_type": "mumps",
 }
-solution = fd.Function(V)
-problem = fd.LinearVariationalProblem(a, L, solution, bcs=bcs, constant_jacobian=False)
+solution = fd.Function(W)
+problem = fd.LinearVariationalProblem(a, L, solution, bcs=bcs, constant_jacobian=True)
 solver = fd.LinearVariationalSolver(problem, solver_parameters=solver_parameters)
 solver.solve()
 
 # Retrieving the solution
-p_h = solution
-sigma_h = fd.project(-grad(p_h), U)
+p1_h, p2_h = fd.split(solution)
+sigma1_h = fd.project(-grad(p1_h), U)
+sigma2_h = fd.project(-grad(p2_h), U)
