@@ -228,7 +228,11 @@ def install_petsc(c):
         c.run(f"make PETSC_DIR={abs_petsc} PETSC_ARCH={arch} all", echo=True)
 
         print("Checking PETSc installation…")
-        c.run(f"make PETSC_DIR=$(pwd) PETSC_ARCH={arch} check", echo=True)
+        try:
+            c.run(f"make PETSC_DIR={abs_petsc} PETSC_ARCH={arch} check", echo=True)
+        except Exception as e:
+            _task_screen_log("PETSc compiled, but failed in the checks!", color="red")
+            _task_screen_log(f"PETSc check output: \n{e}", color="red")
 
     # Export PETSC_DIR and PETSC_ARCH so that subsequent steps see them:
     os.environ["PETSC_DIR"] = abs_petsc
