@@ -74,16 +74,35 @@ def install_deps(c):
 @task(pre=[install_deps])
 def download_firedrake_configure(c):
     """
-    Download the 'firedrake-configure' helper script into the repo root.
+    Download 'firedrake-configure' from the latest Firedrake release.
     """
-    url = (
-        "https://raw.githubusercontent.com/"
-        "firedrakeproject/firedrake/refs/tags/2025.4.0.post0/scripts/firedrake-configure"
+    _task_screen_log("Looking up the latest Firedrake release…")
+
+    # 1) Get the JSON for "latest release", then pull out tag_name.
+    #    e.g. curl -s https://api.github.com/repos/firedrakeproject/firedrake/releases/latest
+    result = c.run(
+        "curl -s https://api.github.com/repos/firedrakeproject/firedrake/releases/latest "
+        "| grep -E '\"tag_name\"' | cut -d '\"' -f 4",
+        hide=True,
+        warn=True,
     )
-    _task_screen_log("Downloading firedrake-configure …")
-    c.run(f"curl -fsSL {url} -o firedrake-configure")
+
+    if result.failed or not result.stdout.strip():
+        raise Exit("Could not retrieve the latest Firedrake tag via GitHub API.")
+
+    latest_tag = result.stdout.strip()
+    _task_screen_log(f"Latest Firedrake release is '{latest_tag}'", color="green")
+
+    # 2) Construct the raw URL for that tag
+    raw_url = (
+        "https://raw.githubusercontent.com/"
+        f"firedrakeproject/firedrake/{latest_tag}/scripts/firedrake-configure"
+    )
+
+    _task_screen_log("Downloading firedrake-configure from the latest release …")
+    c.run(f"curl -fsSL {raw_url} -o firedrake-configure", echo=True)
     c.run("chmod +x firedrake-configure")
-    _task_screen_log("✔ firedrake-configure downloaded.", color="yellow")
+    _task_screen_log(f"✔ downloaded firedrake-configure@{latest_tag}", color="yellow")
 
 
 @task(pre=[download_firedrake_configure])
