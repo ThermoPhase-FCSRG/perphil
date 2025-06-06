@@ -108,29 +108,65 @@ def download_firedrake_configure(c):
 @task(pre=[download_firedrake_configure])
 def install_system_packages(c):
     """
-    Install all system-level dependencies that firedrake-configure recommends, plus
-    ensure OpenMPI development headers are present on Linux.
+    Install all system-level dependencies that firedrake-configure recommends,
+    plus ensure OpenMPI development headers are present on Linux.
+    If a package is already installed, skip it.
     """
     system = platform.system()
+    # 1) ask firedrake-configure which packages it wants
+    result = c.run("python3 firedrake-configure --show-system-packages", hide=True, warn=True)
+    if result.failed:
+        raise Exit("Failed to query `firedrake-configure --show-system-packages`")
+
+    base_pkgs = result.stdout.strip().split()
     if system == "Linux":
-        _task_screen_log("Detected Linux. Installing system packages via apt …")
-        c.run(
-            'sudo sh -c "apt update && apt install -y '
-            '$(python3 firedrake-configure --show-system-packages) libopenmpi-dev openmpi-bin"',
-            pty=True,
-        )
-        _task_screen_log(
-            "✔ System packages installed on Ubuntu (including OpenMPI dev).", color="yellow"
-        )
+        all_pkgs = base_pkgs + ["libopenmpi-dev", "openmpi-bin"]
+
+        missing = []
+        for pkg in all_pkgs:
+            # Check via dpkg-query if pkg is installed
+            check = c.run(f"dpkg-query -W -f='${{Status}}' {pkg}", hide=True, warn=True)
+            # dpkg-query -W will succeed only if the package is installed.
+            # Even if it succeeds, we still check for “install ok installed” in stdout.
+            if check.failed or "install ok installed" not in check.stdout.lower():
+                missing.append(pkg)
+
+        if missing:
+            _task_screen_log("Detected Linux. Installing missing system packages via apt …")
+            # Update and install only the missing ones
+            pkgs_str = " ".join(missing)
+            c.run(
+                f'sudo sh -c "apt update && apt install -y {pkgs_str}"',
+                pty=True,
+            )
+            _task_screen_log(f"✔ Installed: {pkgs_str}", color="yellow")
+        else:
+            _task_screen_log("✔ All system packages are already installed.", color="green")
+
     elif system == "Darwin":
-        # brew never needs sudo on macOS
-        _task_screen_log("Detected macOS. Installing system packages via brew …")
-        c.run("brew update", echo=True)
-        c.run(
-            "brew install $(python3 firedrake-configure --show-system-packages)",
-            pty=True,
-        )
-        _task_screen_log("✔ System packages installed on macOS.", color="yellow")
+        all_pkgs = base_pkgs  # macOS doesn’t need explicit OpenMPI lines here (brew will pull it if required)
+
+        missing = []
+        for pkg in all_pkgs:
+            # Check via `brew list --versions <pkg>` whether pkg is present
+            check = c.run(f"brew list --versions {pkg}", hide=True, warn=True)
+            # If `brew list --versions` returns an empty string or fails, the pkg is not installed
+            if check.failed or not check.stdout.strip():
+                missing.append(pkg)
+
+        if missing:
+            _task_screen_log("Detected macOS. Installing missing packages via brew …")
+            # First update Homebrew
+            c.run("brew update", echo=True)
+            pkgs_str = " ".join(missing)
+            c.run(
+                f"brew install {pkgs_str}",
+                pty=True,
+            )
+            _task_screen_log(f"✔ Installed: {pkgs_str}", color="yellow")
+        else:
+            _task_screen_log("✔ All Homebrew packages are already installed.", color="green")
+
     else:
         raise Exit(f"Unsupported OS: {system}. Please install system packages manually.")
 
