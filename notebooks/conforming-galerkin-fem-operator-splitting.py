@@ -43,7 +43,13 @@ def calculate_exact_solution(
 
 # %%
 # 1) Create a mesh and function‐spaces.  For example, a unit square:
-mesh = fd.UnitSquareMesh(10, 10)
+num_elements_x, num_elements_y = 10, 10
+enable_run_on_quads = False
+mesh = fd.UnitSquareMesh(
+    num_elements_x,
+    num_elements_y,
+    quadrilateral=enable_run_on_quads,
+)
 
 # Vector‐valued H1 space for velocity, and scalar CG1 space for pressure:
 V = fd.VectorFunctionSpace(mesh, "CG", 1)
@@ -54,9 +60,9 @@ x, y = fd.SpatialCoordinate(mesh)
 
 # Physical / problem parameters (you can change these as needed):
 k1 = fd.Constant(1.0)  # example value for k1
-k2 = fd.Constant(0.1)  # example value for k2
+k2 = k1 / 1e2  # example value for k2
 beta = fd.Constant(1.0)  # example value for β
-mu = fd.Constant(1.0)  # example value for μ
+mu = fd.Constant(1.0e0)  # example value for μ
 
 # Define η = sqrt(β (k1 + k2) / (k1 k2))
 eta = fd.sqrt(beta * (k1 + k2) / (k1 * k2))
@@ -95,14 +101,14 @@ p2_exact.interpolate(p2_expr)
 
 # %%
 fig, axes = plt.subplots()
-contours = fd.tricontourf(p1_exact, axes=axes, cmap="inferno")
+contours = fd.tripcolor(p1_exact, axes=axes, cmap="inferno")
 axes.set_aspect("equal")
 axes.set_title(r"$p_1$ scalar field")
 fig.colorbar(contours)
 plt.show()
 
 fig, axes = plt.subplots()
-contours = fd.tricontourf(p2_exact, axes=axes, cmap="inferno")
+contours = fd.tripcolor(p2_exact, axes=axes, cmap="inferno")
 axes.set_aspect("equal")
 axes.set_title(r"$p_2$ scalar field")
 fig.colorbar(contours)
@@ -129,15 +135,7 @@ plt.show()
 # ### Monolithic (fully coupled) approximation
 
 # %%
-num_elements_x, num_elements_y = 10, 10
-enable_run_on_quads = False
-mesh = fd.UnitSquareMesh(
-    num_elements_x,
-    num_elements_y,
-    quadrilateral=enable_run_on_quads,
-)
-
-# Approximation
+# Approximation degree
 degree = 1
 
 # Function space declaration
@@ -155,8 +153,8 @@ q1, q2 = fd.TestFunctions(W)
 f = fd.Constant(0.0)
 
 # Dirichlet BCs
-bc_macro = fd.DirichletBC(W.sub(0), p1_expr, "on_boundary")
-bc_micro = fd.DirichletBC(W.sub(1), p2_expr, "on_boundary")
+bc_macro = fd.DirichletBC(W.sub(0), p1_exact, "on_boundary")
+bc_micro = fd.DirichletBC(W.sub(1), p2_exact, "on_boundary")
 bcs = [bc_macro, bc_micro]
 
 # Variational form
@@ -165,11 +163,11 @@ xi = -beta / mu * (p1 - p2)
 
 ## Macro terms
 a = (k1 / mu) * inner(grad(p1), grad(q1)) * dx - xi * q1 * dx
-L = fd.Constant(0.0) * q1 * dx
+L = f * q1 * dx
 
 ## Micro terms
 a += (k2 / mu) * inner(grad(p2), grad(q2)) * dx + xi * q2 * dx
-L += fd.Constant(0.0) * q2 * dx
+L += f * q2 * dx
 
 # Solving the problem
 solver_parameters = {
@@ -184,6 +182,42 @@ solver = fd.LinearVariationalSolver(problem, solver_parameters=solver_parameters
 solver.solve()
 
 # Retrieving the solution
-p1_h, p2_h = fd.split(solution)
-sigma1_h = fd.project(-grad(p1_h), U)
-sigma2_h = fd.project(-grad(p2_h), U)
+p1_h = fd.Function(V, name="p1_h")
+p2_h = fd.Function(V, name="p2_h")
+p1_h.assign(solution.sub(0))
+p2_h.assign(solution.sub(1))
+u1_h = fd.project(-grad(p1_h), U)
+u2_h = fd.project(-grad(p2_h), U)
+
+# %%
+fig, axes = plt.subplots()
+colors = fd.tripcolor(p1_h, axes=axes, cmap="inferno")
+fd.triplot(mesh, axes=axes, interior_kw={"edgecolors": "red"}, boundary_kw={"colors": "red"})
+axes.set_aspect("equal")
+axes.set_title(r"$p_1$ scalar field")
+fig.colorbar(colors)
+plt.show()
+
+fig, axes = plt.subplots()
+colors = fd.tripcolor(p2_h, axes=axes, cmap="inferno")
+fd.triplot(mesh, axes=axes, interior_kw={"edgecolors": "red"}, boundary_kw={"colors": "red"})
+axes.set_aspect("equal")
+axes.set_title(r"$p_2$ scalar field")
+fig.colorbar(colors)
+plt.show()
+
+fig, axes = plt.subplots()
+fd.triplot(mesh, axes=axes, boundary_kw={"colors": "k"})
+colors = fd.quiver(u1_h, axes=axes, cmap="inferno")
+axes.set_aspect("equal")
+axes.set_title(r"$u_1$ vector field")
+fig.colorbar(colors)
+plt.show()
+
+fig, axes = plt.subplots()
+fd.triplot(mesh, axes=axes, boundary_kw={"colors": "k"})
+colors = fd.quiver(u2_h, axes=axes, cmap="inferno")
+axes.set_aspect("equal")
+axes.set_title(r"$u_2$ vector field")
+fig.colorbar(colors)
+plt.show()
