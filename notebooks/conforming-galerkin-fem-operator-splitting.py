@@ -509,4 +509,148 @@ plt.title(f"At x= {x_mid_point:.2f}")
 plt.show()
 
 # %% [markdown]
+# Loop-based Picard fixed-point iterations:
+
+# %%
+# Approximation degree
+degree = 1
+
+# Function space declaration
+pressure_family = "CG"
+velocity_family = "CG"
+U = fd.VectorFunctionSpace(mesh, velocity_family, degree)
+V = fd.FunctionSpace(mesh, pressure_family, degree)
+
+# Trial and test functions
+p1 = fd.TrialFunction(V)
+p2 = fd.TrialFunction(V)
+q1 = fd.TestFunction(V)
+q2 = fd.TestFunction(V)
+
+# Forcing function
+f = fd.Constant(0.0)
+
+# Dirichlet BCs
+bc_macro = fd.DirichletBC(V, p1_exact, "on_boundary")
+bc_micro = fd.DirichletBC(V, p2_exact, "on_boundary")
+
+# Staggered pressures
+p1_old = fd.interpolate(fd.Constant(0), V)
+p2_old = fd.interpolate(fd.Constant(0), V)
+
+# Variational form
+## Mass transfer term
+xi_macro = -beta / mu * (p1 - p2_old)
+xi_micro = -beta / mu * (p1_old - p2)
+
+## Macro terms
+a_1 = (k1 / mu) * inner(grad(p1), grad(q1)) * dx - xi_macro * q1 * dx
+L_1 = f * q1 * dx
+F_macro = a_1 - L_1
+a_macro = fd.lhs(F_macro)
+L_macro = fd.rhs(F_macro)
+
+## Micro terms
+a_2 = (k2 / mu) * inner(grad(p2), grad(q2)) * dx + xi_micro * q2 * dx
+L_2 = f * q2 * dx
+F_micro = a_2 - L_2
+a_micro = fd.lhs(F_micro)
+L_micro = fd.rhs(F_micro)
+
+# Solving the problem for each scale with Picard iterations
+
+## Solver parameters: both scales with LU
+solver_parameters = {
+    "mat_type": "aij",
+    "ksp_type": "preonly",
+    "pc_type": "lu",
+    "pc_factor_mat_solver_type": "mumps",
+}
+
+## Macro
+solution_macro = fd.Function(V)
+problem_macro = fd.LinearVariationalProblem(
+    a_macro, L_macro, solution_macro, bcs=[bc_macro], constant_jacobian=True
+)
+solver_macro = fd.LinearVariationalSolver(problem_macro, solver_parameters=solver_parameters)
+
+## Micro
+solution_micro = fd.Function(V)
+problem_micro = fd.LinearVariationalProblem(
+    a_micro, L_micro, solution_micro, bcs=[bc_micro], constant_jacobian=True
+)
+solver_micro = fd.LinearVariationalSolver(problem_micro, solver_parameters=solver_parameters)
+
+## Picard loop
+rtol, maxit = 1e-12, 10000
+damping_parameter = fd.Constant(1)
+for i in range(1, maxit + 1):
+    # Macro sub-system
+    solver_macro.solve()  # macro with micro fixed
+    p1_old_k = p1_old.copy(deepcopy=True)
+    p1_old.assign((1 - damping_parameter) * p1_old + damping_parameter * solution_macro)
+
+    # Micro sub-system
+    solver_micro.solve()  # micro with macro fixed
+    p2_old_k = p2_old.copy(deepcopy=True)
+    p2_old.assign((1 - damping_parameter) * p2_old + damping_parameter * solution_micro)
+
+    # Errors and residuals
+    p1_residual = fd.norm(solution_macro - p1_old_k)
+    p2_residual = fd.norm(solution_micro - p2_old_k)
+    p1_rel_error = p1_residual / fd.norm(solution_macro)
+    p2_rel_error = p2_residual / fd.norm(solution_micro)
+    print(f"Picard iteration: {i}; p1 rel error = {p1_rel_error}; p2 rel error = {p2_rel_error}")
+
+    # Convergence check
+    if max(p1_rel_error, p2_rel_error) < rtol:
+        print(f"Converged in {i} Picard steps")
+        break
+
+    # Update fully staggered pressures according to Picard's fixed-point method
+    # p1_old.assign((1 - damping_parameter) * p1_old + damping_parameter * solution_macro)
+    # p2_old.assign((1 - damping_parameter) * p2_old + damping_parameter * solution_micro)
+else:
+    print("Picard did not converge in", maxit)
+
+# %%
+# Retrieving the solution
+p1_h = solution_macro
+p2_h = solution_micro
+u1_h = fd.project(-grad(p1_h), U)
+u2_h = fd.project(-grad(p2_h), U)
+
+# Fixed x-point coordinate to slice the solution
+x_points, y_points = get_xy_coordinate_points(V, mesh)
+x_mid_point = (x_points.min() + x_points.max()) / 2
+
+p1_at_x_mid_point = retrieve_solution_on_line_fixed_x(p1_h, V, mesh, x_mid_point)
+
+p2_at_x_mid_point = retrieve_solution_on_line_fixed_x(p2_h, V, mesh, x_mid_point)
+
+p1_exact_at_x_mid_point = retrieve_solution_on_line_fixed_x(p1_exact, V, mesh, x_mid_point)
+
+p2_exact_at_x_mid_point = retrieve_solution_on_line_fixed_x(p2_exact, V, mesh, x_mid_point)
+
+# %%
+figsize = (7, 7)
+plt.figure(figsize=figsize)
+plt.plot(y_points, p1_at_x_mid_point, "x", ms=10, lw=4, c="k", label="CG")
+plt.plot(y_points, p1_exact_at_x_mid_point, lw=4, c="k", label="Exact Solution")
+plt.legend(frameon=False)
+plt.xlabel("y coordinate")
+plt.ylabel(r"Macro Pressure $(p_{1,h})$")
+plt.title(f"At x= {x_mid_point:.2f}")
+plt.show()
+
+plt.figure(figsize=figsize)
+plt.plot(y_points, p2_at_x_mid_point, "x", ms=10, lw=4, c="k", label="CG")
+plt.plot(y_points, p2_exact_at_x_mid_point, lw=4, c="k", label="Exact Solution")
+plt.legend(frameon=False)
+plt.xlabel("y coordinate")
+plt.ylabel(r"Micro Pressure $(p_{2,h})$")
+plt.title(f"At x= {x_mid_point:.2f}")
+plt.show()
+
+# %% [markdown]
 # ## Case 2
