@@ -30,8 +30,20 @@ repos:
     # Run the linter.
     - id: ruff
       args: [ --fix ]
+      exclude: ^notebooks/
     # Run the formatter.
     - id: ruff-format
+      exclude: ^notebooks/
+
+- repo: https://github.com/nbQA-dev/nbQA
+  rev: 1.9.1
+  hooks:
+    - id: nbqa-ruff
+      args: [--fix]
+      files: ^notebooks/.*\.ipynb$
+    - id: nbqa-black
+      args: [--quiet]
+      files: ^notebooks/.*\.ipynb$
 
 - repo: https://github.com/mwouts/jupytext
   rev: v1.17.2
