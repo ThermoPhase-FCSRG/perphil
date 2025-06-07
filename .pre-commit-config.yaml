@@ -28,7 +28,7 @@ repos:
   hooks:
     - id: jupytext
       # Only runs on notebooks/* ipynb files
-      files: '^notebooks/.*\.ipynb$'
+      files: '^notebooks/.*\.(ipynb|py)$'
       args: ['--sync']
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
