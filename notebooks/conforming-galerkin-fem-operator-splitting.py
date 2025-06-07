@@ -1,3 +1,6 @@
+# %% [markdown]
+# # 2D DPP Galerkin FEM - Monolithic solver
+
 # %%
 import os
 import matplotlib.pyplot as plt
@@ -21,11 +24,14 @@ exp = fd.exp
 cos = fd.cos
 
 # %% [markdown]
-# ## Exact solutions
+# ## Case 1
+
+# %% [markdown]
+# ### Exact solutions
 
 # %%
 # 1) Create a mesh and function‐spaces.  For example, a unit square:
-num_elements_x, num_elements_y = 10, 10
+num_elements_x, num_elements_y = 20, 20
 enable_run_on_quads = True
 mesh = fd.UnitSquareMesh(
     num_elements_x,
@@ -111,10 +117,10 @@ fig.colorbar(contours)
 plt.show()
 
 # %% [markdown]
-# ## Conforming Galerkin FEM approximations
+# ### Conforming Galerkin FEM approximations
 
 # %% [markdown]
-# ### Monolithic (fully coupled) approximation
+# #### Monolithic (fully coupled) approximation
 
 # %%
 # Approximation degree
@@ -257,3 +263,250 @@ plt.xlabel("y coordinate")
 plt.ylabel(r"Micro Pressure $(p_{2,h})$")
 plt.title(f"At x= {x_mid_point:.2f}")
 plt.show()
+
+# %% [markdown]
+# #### Scale-splitting
+
+# %% [markdown]
+# Pre-conditioner by scale:
+
+# %%
+# Approximation degree
+degree = 1
+
+# Function space declaration
+pressure_family = "CG"
+velocity_family = "CG"
+U = fd.VectorFunctionSpace(mesh, velocity_family, degree)
+V = fd.FunctionSpace(mesh, pressure_family, degree)
+W = V * V
+
+# Trial and test functions
+dpp_fields = fd.Function(W)
+p1, p2 = fd.TrialFunctions(W)
+q1, q2 = fd.TestFunctions(W)
+
+# Forcing function
+f = fd.Constant(0.0)
+
+# Dirichlet BCs
+bc_macro = fd.DirichletBC(W.sub(0), p1_exact, "on_boundary")
+bc_micro = fd.DirichletBC(W.sub(1), p2_exact, "on_boundary")
+bcs = [bc_macro, bc_micro]
+
+# Variational form
+## Mass transfer term
+xi = -beta / mu * (p1 - p2)
+
+## Macro terms
+a = (k1 / mu) * inner(grad(p1), grad(q1)) * dx - xi * q1 * dx
+L = f * q1 * dx
+
+## Micro terms
+a += (k2 / mu) * inner(grad(p2), grad(q2)) * dx + xi * q2 * dx
+L += f * q2 * dx
+
+# Solving the problem
+solver_parameters = {
+    "snes_type": "ksponly",
+    "ksp_monitor": None,
+    "pmat_type": "aij",
+    "mat_type": "aij",
+    "ksp_type": "gmres",
+    "ksp_rtol": 1.0e-12,
+    "ksp_atol": 1.0e-12,
+    "pc_type": "fieldsplit",
+    "pc_fieldsplit_type": "multiplicative",
+    "pc_fieldsplit_0_fields": "0",
+    "pc_fieldsplit_1_fields": "1",
+    "fieldsplit_0": {
+        "mat_type": "aij",
+        "ksp_type": "preonly",
+        "pc_type": "lu",
+        "pc_factor_mat_solver_type": "mumps",
+    },
+    "fieldsplit_1": {
+        "mat_type": "aij",
+        "ksp_type": "preonly",
+        "pc_type": "lu",
+        "pc_factor_mat_solver_type": "mumps",
+    },
+}
+solution = fd.Function(W)
+problem = fd.LinearVariationalProblem(a, L, solution, bcs=bcs, constant_jacobian=True)
+solver = fd.LinearVariationalSolver(
+    problem, solver_parameters=solver_parameters, options_prefix="dpp"
+)
+solver.solve()
+
+# Retrieving the solution
+p1_h = fd.Function(V, name="p1_h")
+p2_h = fd.Function(V, name="p2_h")
+p1_h.assign(solution.sub(0))
+p2_h.assign(solution.sub(1))
+u1_h = fd.project(-grad(p1_h), U)
+u2_h = fd.project(-grad(p2_h), U)
+
+# %%
+solver_parameters_gmres = {
+    "mat_type": "aij",
+    "pc_type": "jacobi",
+    "ksp_type": "gmres",
+    "ksp_rtol": 1.0e-12,
+    "ksp_atol": 1.0e-12,
+    "ksp_max_it": 5000,
+    "ksp_monitor": None,
+}
+solution_gmres = fd.Function(W)
+problem_gmres = fd.LinearVariationalProblem(a, L, solution_gmres, bcs=bcs, constant_jacobian=True)
+solver_gmres = fd.LinearVariationalSolver(problem_gmres, solver_parameters=solver_parameters_gmres)
+solver_gmres.solve()
+
+# %%
+# Fixed x-point coordinate to slice the solution
+x_points, y_points = get_xy_coordinate_points(V, mesh)
+x_mid_point = (x_points.min() + x_points.max()) / 2
+
+p1_at_x_mid_point = retrieve_solution_on_line_fixed_x(p1_h, V, mesh, x_mid_point)
+
+p2_at_x_mid_point = retrieve_solution_on_line_fixed_x(p2_h, V, mesh, x_mid_point)
+
+p1_exact_at_x_mid_point = retrieve_solution_on_line_fixed_x(p1_exact, V, mesh, x_mid_point)
+
+p2_exact_at_x_mid_point = retrieve_solution_on_line_fixed_x(p2_exact, V, mesh, x_mid_point)
+
+# %%
+figsize = (7, 7)
+plt.figure(figsize=figsize)
+plt.plot(y_points, p1_at_x_mid_point, "x", ms=10, lw=4, c="k", label="CG")
+plt.plot(y_points, p1_exact_at_x_mid_point, lw=4, c="k", label="Exact Solution")
+plt.legend(frameon=False)
+plt.xlabel("y coordinate")
+plt.ylabel(r"Macro Pressure $(p_{1,h})$")
+plt.title(f"At x= {x_mid_point:.2f}")
+plt.show()
+
+plt.figure(figsize=figsize)
+plt.plot(y_points, p2_at_x_mid_point, "x", ms=10, lw=4, c="k", label="CG")
+plt.plot(y_points, p2_exact_at_x_mid_point, lw=4, c="k", label="Exact Solution")
+plt.legend(frameon=False)
+plt.xlabel("y coordinate")
+plt.ylabel(r"Micro Pressure $(p_{2,h})$")
+plt.title(f"At x= {x_mid_point:.2f}")
+plt.show()
+
+# %% [markdown]
+# Picard (fixed-point) iterations:
+
+# %%
+# Approximation degree
+degree = 1
+
+# Function space declaration
+pressure_family = "CG"
+velocity_family = "CG"
+U = fd.VectorFunctionSpace(mesh, velocity_family, degree)
+V = fd.FunctionSpace(mesh, pressure_family, degree)
+W = V * V
+
+# Trial and test functions
+dpp_fields = fd.Function(W)
+p1, p2 = fd.split(dpp_fields)
+q1, q2 = fd.TestFunctions(W)
+
+# Forcing function
+f = fd.Constant(0.0)
+
+# Dirichlet BCs
+bc_macro = fd.DirichletBC(W.sub(0), p1_exact, "on_boundary")
+bc_micro = fd.DirichletBC(W.sub(1), p2_exact, "on_boundary")
+bcs = [bc_macro, bc_micro]
+
+# Variational form
+## Mass transfer term
+xi = -beta / mu * (p1 - p2)
+
+## Macro terms
+a = (k1 / mu) * inner(grad(p1), grad(q1)) * dx - xi * q1 * dx
+L = f * q1 * dx
+
+## Micro terms
+a += (k2 / mu) * inner(grad(p2), grad(q2)) * dx + xi * q2 * dx
+L += f * q2 * dx
+
+solver_parameters_picard = {
+    # Iteration monitoring
+    "snes_monitor": None,
+    # Set nonlinear Richardson (equivalent to Picard)
+    "snes_type": "nrichardson",
+    "snes_max_it": 15000,
+    # The simplest line-search (no extra damping)
+    "snes_linesearch_type": "basic",
+    "snes_linesearch_damping": 0.5,  # for full step, use 1.0
+    # Split by scales
+    "pc_type": "fieldsplit",
+    "pc_fieldsplit_type": "multiplicative",
+    "pc_fieldsplit_0_fields": "0",  # macro
+    "pc_fieldsplit_1_fields": "1",  # micro
+    # Set the LU solver for each block
+    "fieldsplit_0_ksp_type": "preonly",
+    "fieldsplit_0_pc_type": "lu",
+    "fieldsplit_0_pc_factor_mat_solver_type": "mumps",
+    "fieldsplit_1_ksp_type": "preonly",
+    "fieldsplit_1_pc_type": "lu",
+    "fieldsplit_1_pc_factor_mat_solver_type": "mumps",
+    # Convergence criteria
+    "snes_rtol": 1e-5,  # rel tol between Picard iterations
+    "snes_atol": 1e-12,
+}
+
+F = a - L
+problem_picard = fd.NonlinearVariationalProblem(F, dpp_fields, bcs=bcs)
+solver_picard = fd.NonlinearVariationalSolver(
+    problem_picard, solver_parameters=solver_parameters_picard
+)
+solver_picard.solve()
+
+# %%
+# Retrieving the solution
+p1_h = fd.Function(V, name="p1_h")
+p2_h = fd.Function(V, name="p2_h")
+p1_h.assign(dpp_fields.sub(0))
+p2_h.assign(dpp_fields.sub(1))
+u1_h = fd.project(-grad(p1_h), U)
+u2_h = fd.project(-grad(p2_h), U)
+
+# Fixed x-point coordinate to slice the solution
+x_points, y_points = get_xy_coordinate_points(V, mesh)
+x_mid_point = (x_points.min() + x_points.max()) / 2
+
+p1_at_x_mid_point = retrieve_solution_on_line_fixed_x(p1_h, V, mesh, x_mid_point)
+
+p2_at_x_mid_point = retrieve_solution_on_line_fixed_x(p2_h, V, mesh, x_mid_point)
+
+p1_exact_at_x_mid_point = retrieve_solution_on_line_fixed_x(p1_exact, V, mesh, x_mid_point)
+
+p2_exact_at_x_mid_point = retrieve_solution_on_line_fixed_x(p2_exact, V, mesh, x_mid_point)
+
+# %%
+figsize = (7, 7)
+plt.figure(figsize=figsize)
+plt.plot(y_points, p1_at_x_mid_point, "x", ms=10, lw=4, c="k", label="CG")
+plt.plot(y_points, p1_exact_at_x_mid_point, lw=4, c="k", label="Exact Solution")
+plt.legend(frameon=False)
+plt.xlabel("y coordinate")
+plt.ylabel(r"Macro Pressure $(p_{1,h})$")
+plt.title(f"At x= {x_mid_point:.2f}")
+plt.show()
+
+plt.figure(figsize=figsize)
+plt.plot(y_points, p2_at_x_mid_point, "x", ms=10, lw=4, c="k", label="CG")
+plt.plot(y_points, p2_exact_at_x_mid_point, lw=4, c="k", label="Exact Solution")
+plt.legend(frameon=False)
+plt.xlabel("y coordinate")
+plt.ylabel(r"Micro Pressure $(p_{2,h})$")
+plt.title(f"At x= {x_mid_point:.2f}")
+plt.show()
+
+# %% [markdown]
+# ## Case 2
