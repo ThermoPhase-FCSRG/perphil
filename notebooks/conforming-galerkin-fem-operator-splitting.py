@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 os.environ["OMP_NUM_THREADS"] = "1"
 
 import firedrake as fd
+import numpy as np
 
 # %% [markdown]
 # For convenience, we define the operators from Firedrake:
@@ -19,32 +20,13 @@ sin = fd.sin
 exp = fd.exp
 cos = fd.cos
 
-
-# %%
-# TODO: Update here!
-def exact_solutions_expressions(mesh):
-    x, y = fd.SpatialCoordinate(mesh)
-    p_exact = fd.sin(2 * fd.pi * x) * fd.sin(2 * fd.pi * y)  # noqa: F405
-    flux_exact = -grad(p_exact)
-    return p_exact, flux_exact
-
-
-def calculate_exact_solution(
-    mesh, pressure_family, velocity_family, pressure_degree, velocity_degree, is_hdiv_space=False
-):
-    """
-    For compatibility only. Should be removed.
-    """
-    return exact_solutions_expressions(mesh)
-
-
 # %% [markdown]
 # ## Exact solutions
 
 # %%
 # 1) Create a mesh and function‐spaces.  For example, a unit square:
 num_elements_x, num_elements_y = 10, 10
-enable_run_on_quads = False
+enable_run_on_quads = True
 mesh = fd.UnitSquareMesh(
     num_elements_x,
     num_elements_y,
@@ -59,9 +41,9 @@ Q = fd.FunctionSpace(mesh, "CG", 1)
 x, y = fd.SpatialCoordinate(mesh)
 
 # Physical / problem parameters (you can change these as needed):
-k1 = fd.Constant(1.0)  # example value for k1
+k1 = fd.Constant(1.0e0)  # example value for k1
 k2 = k1 / 1e2  # example value for k2
-beta = fd.Constant(1.0)  # example value for β
+beta = fd.Constant(1.0e0)  # example value for β
 mu = fd.Constant(1.0e0)  # example value for μ
 
 # Define η = sqrt(β (k1 + k2) / (k1 k2))
@@ -220,4 +202,58 @@ colors = fd.quiver(u2_h, axes=axes, cmap="inferno")
 axes.set_aspect("equal")
 axes.set_title(r"$u_2$ vector field")
 fig.colorbar(colors)
+plt.show()
+
+
+# %%
+def get_xy_coordinate_points(function_space, mesh):
+    x, y = fd.SpatialCoordinate(mesh)
+
+    xfunc = fd.Function(function_space).interpolate(x)
+    x_points = np.unique(np.array(xfunc.dat.data))
+
+    yfunc = fd.Function(function_space).interpolate(y)
+    y_points = np.unique(np.array(yfunc.dat.data))
+
+    return x_points, y_points
+
+
+def retrieve_solution_on_line_fixed_x(solution, function_space, mesh, x_value):
+    _, y_points = get_xy_coordinate_points(function_space, mesh)
+    solution_on_a_line = [solution.at([x_value, y_point]) for y_point in y_points]
+    solution_on_a_line = np.array(solution_on_a_line)
+    return solution_on_a_line
+
+
+# %%
+# Fixed x-point coordinate to slice the solution
+x_points, y_points = get_xy_coordinate_points(V, mesh)
+x_mid_point = (x_points.min() + x_points.max()) / 2
+
+p1_at_x_mid_point = retrieve_solution_on_line_fixed_x(p1_h, V, mesh, x_mid_point)
+
+p2_at_x_mid_point = retrieve_solution_on_line_fixed_x(p2_h, V, mesh, x_mid_point)
+
+p1_exact_at_x_mid_point = retrieve_solution_on_line_fixed_x(p1_exact, V, mesh, x_mid_point)
+
+p2_exact_at_x_mid_point = retrieve_solution_on_line_fixed_x(p2_exact, V, mesh, x_mid_point)
+
+# %%
+figsize = (7, 7)
+plt.figure(figsize=figsize)
+plt.plot(y_points, p1_at_x_mid_point, "x", ms=10, lw=4, c="k", label="CG")
+plt.plot(y_points, p1_exact_at_x_mid_point, lw=4, c="k", label="Exact Solution")
+plt.legend(frameon=False)
+plt.xlabel("y coordinate")
+plt.ylabel(r"Macro Pressure $(p_{1,h})$")
+plt.title(f"At x= {x_mid_point:.2f}")
+plt.show()
+
+plt.figure(figsize=figsize)
+plt.plot(y_points, p2_at_x_mid_point, "x", ms=10, lw=4, c="k", label="CG")
+plt.plot(y_points, p2_exact_at_x_mid_point, lw=4, c="k", label="Exact Solution")
+plt.legend(frameon=False)
+plt.xlabel("y coordinate")
+plt.ylabel(r"Micro Pressure $(p_{2,h})$")
+plt.title(f"At x= {x_mid_point:.2f}")
 plt.show()
