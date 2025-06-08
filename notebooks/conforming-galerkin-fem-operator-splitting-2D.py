@@ -900,6 +900,3 @@ micro_system_condition_number = calculate_condition_number(
 
 print(f"Macro system Condition Number: {macro_system_condition_number}")
 print(f"Micro system Condition Number: {micro_system_condition_number}")
-
-# %% [markdown]
-# ## Case 2
