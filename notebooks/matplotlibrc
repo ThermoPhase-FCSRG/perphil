@@ -5,3 +5,6 @@ xtick.labelsize: 16
 ytick.labelsize: 16
 legend.fontsize: 16
 figure.titlesize: 16
+
+# Set plotting backend
+backend: Agg
