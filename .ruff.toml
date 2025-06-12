@@ -32,3 +32,6 @@ exclude = [
 
 line-length = 100
 indent-width = 4
+
+[lint.per-file-ignores]
+"src/perphil/__init__.py" = ["F401"]
