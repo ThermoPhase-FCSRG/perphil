@@ -37,3 +37,14 @@ class DPPParameters:
             self.beta = fd.Constant(self.beta)
         if not isinstance(self.mu, fd.Constant):
             self.mu = fd.Constant(self.mu)
+        
+    @property
+    def eta(self) -> fd.Constant:
+        """
+        :return:
+            Computed eta = sqrt(beta*(k1+k2) / (k1*k2)).
+        """
+        assert type(self.k2) is not None
+        assert isinstance(self.k1, fd.Constant)
+        eta_expression = fd.sqrt(self.beta * (self.k1 + self.k2) / (self.k1 * self.k2))
+        return eta_expression
