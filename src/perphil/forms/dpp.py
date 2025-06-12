@@ -4,7 +4,7 @@ import firedrake as fd
 from perphil.models.dpp.parameters import DPPParameters
 
 
-def dpp_form(W: fd.FunctionSpace, params: DPPParameters) -> Tuple[fd.Form, fd.Form]:
+def dpp_form(W: fd.FunctionSpace, model_params: DPPParameters) -> Tuple[fd.Form, fd.Form]:
     """
     Build the bilinear and linear forms for the double-porosity/permeability system.
 
@@ -28,10 +28,10 @@ def dpp_form(W: fd.FunctionSpace, params: DPPParameters) -> Tuple[fd.Form, fd.Fo
     p1, p2 = fd.TrialFunctions(W)
     q1, q2 = fd.TestFunctions(W)
 
-    k1 = params.k1
-    k2 = params.k2
-    beta = params.beta
-    mu = params.mu
+    k1 = model_params.k1
+    k2 = model_params.k2
+    beta = model_params.beta
+    mu = model_params.mu
 
     xi = -beta / mu * (p1 - p2)
 
@@ -47,7 +47,9 @@ def dpp_form(W: fd.FunctionSpace, params: DPPParameters) -> Tuple[fd.Form, fd.Fo
     return a, L
 
 
-def dpp_splitted_form(W: fd.FunctionSpace, params: DPPParameters) -> Tuple[fd.Form, fd.Function]:
+def dpp_splitted_form(
+    W: fd.FunctionSpace, model_params: DPPParameters
+) -> Tuple[fd.Form, fd.Function]:
     """
     Build the nonlinear residual form for Picard (fixed-point) iterations.
 
@@ -72,10 +74,10 @@ def dpp_splitted_form(W: fd.FunctionSpace, params: DPPParameters) -> Tuple[fd.Fo
     p1, p2 = fd.split(fields)
     q1, q2 = fd.TestFunctions(W)
 
-    k1 = params.k1
-    k2 = params.k2
-    beta = params.beta
-    mu = params.mu
+    k1 = model_params.k1
+    k2 = model_params.k2
+    beta = model_params.beta
+    mu = model_params.mu
 
     xi = -beta / mu * (p1 - p2)
 

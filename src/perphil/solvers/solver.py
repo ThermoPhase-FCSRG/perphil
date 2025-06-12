@@ -7,7 +7,7 @@ from perphil.forms.dpp import dpp_form, dpp_splitted_form
 
 def solve_dpp(
     W: fd.FunctionSpace,
-    params: DPPParameters,
+    model_params: DPPParameters,
     bcs: List[fd.DirichletBC],
     solver_parameters: Dict,
 ) -> fd.Function:
@@ -35,7 +35,7 @@ def solve_dpp(
     if not isinstance(W, fd.MixedFunctionSpace):
         raise ValueError(f"Expected a MixedFunctionSpace for W, got {type(W)}")
 
-    a, L = dpp_form(W, params)
+    a, L = dpp_form(W, model_params)
     solution = fd.Function(W)
     problem = fd.LinearVariationalProblem(a, L, solution, bcs=bcs)
     solver = fd.LinearVariationalSolver(problem, solver_parameters=solver_parameters)
@@ -45,7 +45,7 @@ def solve_dpp(
 
 def solve_dpp_splitted(
     W: fd.FunctionSpace,
-    params: DPPParameters,
+    model_params: DPPParameters,
     bcs: List[fd.DirichletBC],
     solver_parameters: Dict,
     options_prefix: str = "dpp",
@@ -77,7 +77,7 @@ def solve_dpp_splitted(
     if not isinstance(W, fd.MixedFunctionSpace):
         raise ValueError(f"Expected a MixedFunctionSpace for W, got {type(W)}")
 
-    F, fields = dpp_splitted_form(W, params)
+    F, fields = dpp_splitted_form(W, model_params)
     problem = fd.NonlinearVariationalProblem(F, fields, bcs=bcs)
     solver = fd.NonlinearVariationalSolver(
         problem, solver_parameters=solver_parameters, options_prefix=options_prefix

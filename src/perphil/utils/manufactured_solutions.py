@@ -4,7 +4,7 @@ from perphil.models.dpp.parameters import DPPParameters
 
 
 def exact_expressions(
-    mesh: fd.Mesh, params: DPPParameters
+    mesh: fd.Mesh, dpp_params: DPPParameters
 ) -> tuple[fd.Expr, fd.Expr, fd.Expr, fd.Expr]:
     """
     Build analytic UFL expressions for u1, p1, u2, p2.
@@ -19,11 +19,11 @@ def exact_expressions(
         Tuple of UFL expressions (u1_expr, p1_expr, u2_expr, p2_expr).
     """
     x, y = fd.SpatialCoordinate(mesh)
-    k1 = params.k1
-    k2 = params.k2
-    beta = params.beta
-    mu = params.mu
-    eta = params.eta
+    k1 = dpp_params.k1
+    k2 = dpp_params.k2
+    beta = dpp_params.beta
+    mu = dpp_params.mu
+    eta = dpp_params.eta
 
     u1_expr = fd.as_vector(
         [
@@ -52,7 +52,7 @@ def interpolate_exact(
     mesh: fd.Mesh,
     velocity_space: fd.FunctionSpace,
     pressure_space: fd.FunctionSpace,
-    params: DPPParameters,
+    dpp_params: DPPParameters,
 ) -> tuple[fd.Function, fd.Function, fd.Function, fd.Function]:
     """
     Interpolate analytic expressions into Firedrake Functions.
@@ -72,7 +72,7 @@ def interpolate_exact(
     :return:
         Tuple of Firedrake Functions (u1_exact, p1_exact, u2_exact, p2_exact).
     """
-    u1_e, p1_e, u2_e, p2_e = exact_expressions(mesh, params)
+    u1_e, p1_e, u2_e, p2_e = exact_expressions(mesh, dpp_params)
 
     u1_exact = fd.Function(velocity_space, name="u1_exact")
     u1_exact.interpolate(u1_e)
