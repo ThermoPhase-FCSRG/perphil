@@ -20,7 +20,7 @@ class DPPParameters:
         Viscosity parameter.
         
     :param eta:
-        Permeability constrast parameter.
+        Permeability constrast parameter (computed from k1 and k2 only).
     """
 
     k1: float | fd.Constant = 1.0
