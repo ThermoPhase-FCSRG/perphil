@@ -67,11 +67,8 @@ def install_deps(c):
     """
     Install all Python dependencies listed in requirements.txt into the venv.
     """
-    requirements_file = "requirements.txt"
-    if not os.path.isfile(requirements_file):
-        raise Exit(f"Could not find {requirements_file!r} in the project root.")
-    _task_screen_log(f"Installing Python dependencies from {requirements_file} …")
-    c.run(f"{_venv_activate_prefix()} pip install -r {requirements_file}", pty=True)
+    _task_screen_log("Installing Python dependencies for perphil …")
+    c.run(f"{_venv_activate_prefix()} pip install -e '.[dev]'", pty=True)
     _task_screen_log("✔ Python-level dependencies installed.", color="yellow")
 
 
