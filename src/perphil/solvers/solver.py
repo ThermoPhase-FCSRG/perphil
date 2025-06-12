@@ -17,7 +17,7 @@ def solve_dpp(
     :param W:
         MixedFunctionSpace for (p1, p2) pressures.
 
-    :param params:
+    :param model_params:
         DPPParameters container with model constants.
 
     :param bcs:
@@ -56,7 +56,7 @@ def solve_dpp_splitted(
     :param W:
         MixedFunctionSpace for (p1, p2) unknowns.
 
-    :param params:
+    :param model_params:
         DPPParameters container with model constants.
 
     :param bcs:
