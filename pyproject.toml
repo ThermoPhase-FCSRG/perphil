@@ -43,6 +43,7 @@ dev = [
   "nb-clean",
   "jupytext",
   "ruff",
+  "mypy",
 ]
 
 [tool.setuptools]
