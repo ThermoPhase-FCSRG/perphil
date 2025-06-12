@@ -12,19 +12,25 @@ def exact_expressions(
     :param mesh:
         A Firedrake Mesh instance.
 
-    :param params:
+    :param dpp_params:
         DPPParameters container with model constants.
 
     :return:
         Tuple of UFL expressions (u1_expr, p1_expr, u2_expr, p2_expr).
     """
+    # Get DOFs coordinate points
     x, y = fd.SpatialCoordinate(mesh)
+    
+    # Get the model parameters
     k1 = dpp_params.k1
+    assert isinstance(k1, fd.Constant)
     k2 = dpp_params.k2
+    assert isinstance(k2, fd.Constant)
     beta = dpp_params.beta
     mu = dpp_params.mu
     eta = dpp_params.eta
 
+    # Exact solution expressions
     u1_expr = fd.as_vector(
         [
             -k1 * (fd.exp(fd.pi * x) * fd.sin(fd.pi * y)),
