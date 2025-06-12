@@ -18,6 +18,9 @@ class DPPParameters:
 
     :param mu:
         Viscosity parameter.
+        
+    :param eta:
+        Permeability constrast parameter.
     """
 
     k1: float | fd.Constant = 1.0
