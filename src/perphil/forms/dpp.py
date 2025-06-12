@@ -11,7 +11,7 @@ def dpp_form(W: fd.FunctionSpace, model_params: DPPParameters) -> Tuple[fd.Form,
     :param W:
         A MixedFunctionSpace for (p1, p2) pressures.
 
-    :param params:
+    :param model_params:
         DPPParameters container with model constants.
 
     :return:
@@ -56,7 +56,7 @@ def dpp_splitted_form(
     :param W:
         A MixedFunctionSpace for (p1, p2) unknowns.
 
-    :param params:
+    :param model_params:
         DPPParameters container with model constants.
 
     :return:
