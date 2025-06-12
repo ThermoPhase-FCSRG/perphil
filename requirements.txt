@@ -1,9 +1,0 @@
-notebook
-pre-commit
-attrs
-jupytext
-ruff
-nb-clean
-invoke
-rich
-matplotlib
