@@ -1,5 +1,3 @@
-# src/dpp/postprocess.py
-
 from typing import Tuple, Optional
 import numpy as np
 import firedrake as fd
