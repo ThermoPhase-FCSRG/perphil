@@ -27,7 +27,7 @@ FIELDSPLIT_LU_PARAMS: dict = {
 }
 
 # Picard (nonlinear Richardson) solver parameters with field-split
-PICARD_SOLVER_PARAMS: dict = {
+RICHARDSON_SOLVER_PARAMS: dict = {
     "snes_type": "nrichardson",
     "snes_max_it": 50000,
     "snes_linesearch_type": "basic",
