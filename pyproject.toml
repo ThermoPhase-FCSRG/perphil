@@ -43,6 +43,7 @@ dev = [
   "jupytext",
   "ruff",
   "mypy",
+  "codespell",
 ]
 
 [tool.setuptools]
