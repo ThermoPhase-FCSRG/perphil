@@ -132,7 +132,12 @@ def dpp_form(W: fd.FunctionSpace, model_params: DPPParameters) -> Tuple[fd.Form,
     return a, L
 
 
-def dpp_delayed_form(W: fd.FunctionSpace, model_params: DPPParameters) -> Tuple[fd.Form, fd.Form]:
+def dpp_delayed_form(
+    W: fd.FunctionSpace,
+    model_params: DPPParameters,
+    macro_pressure_initial_values: fd.Function,
+    micro_pressure_initial_values: fd.Function,
+) -> Tuple[fd.Form, fd.Form]:
     """
     Build the bilinear and linear forms for the double-porosity/permeability system with delayed
     pressure fields.
@@ -144,6 +149,12 @@ def dpp_delayed_form(W: fd.FunctionSpace, model_params: DPPParameters) -> Tuple[
 
     :param model_params:
         DPPParameters container with model constants.
+
+    :param macro_pressure_initial_values:
+        A macro pressure field used as initial guess for the Picard iterations.
+
+    :param micro_pressure_initial_values:
+        A micro pressure field used as initial guess for the Picard iterations.
 
     :return:
         Tuple of ((a_macro, L_macro), (a_micro, L_micro)), where:
@@ -173,8 +184,8 @@ def dpp_delayed_form(W: fd.FunctionSpace, model_params: DPPParameters) -> Tuple[
     mu = model_params.mu
 
     # Initial delayed pressures (assumed zero)
-    p1_old = fd.interpolate(fd.Constant(0), W.sub(0))
-    p2_old = fd.interpolate(fd.Constant(0), W.sub(1))
+    p1_old = macro_pressure_initial_values
+    p2_old = micro_pressure_initial_values
 
     ## Macro terms
     forms_macro = _macro_scale_form((p1, q1), p2_old, k1, mu, beta)
