@@ -30,6 +30,7 @@ def dpp_form(W: fd.FunctionSpace, model_params: DPPParameters) -> Tuple[fd.Form,
 
     k1 = model_params.k1
     k2 = model_params.k2
+    assert isinstance(k2, fd.Constant)
     beta = model_params.beta
     mu = model_params.mu
 
@@ -76,6 +77,7 @@ def dpp_splitted_form(
 
     k1 = model_params.k1
     k2 = model_params.k2
+    assert isinstance(k2, fd.Constant)
     beta = model_params.beta
     mu = model_params.mu
 
