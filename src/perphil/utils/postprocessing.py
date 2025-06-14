@@ -23,22 +23,28 @@ def split_dpp_solution(dpp_solution: fd.Function) -> Tuple[fd.Function, fd.Funct
     V1 = W.sub(0)
     V2 = W.sub(1)
 
-    p_macro = fd.Function(V1, name="p1_h")
-    p2_micro = fd.Function(V2, name="p2_h")
-    p_macro.assign(dpp_solution.sub(0))
-    p2_micro.assign(dpp_solution.sub(1))
+    pressure_macro = fd.Function(V1, name="p1_h")
+    pressure_micro = fd.Function(V2, name="p2_h")
+    pressure_macro.assign(dpp_solution.sub(0))
+    pressure_micro.assign(dpp_solution.sub(1))
 
-    return p_macro, p2_micro
+    return pressure_macro, pressure_micro
 
 
-def project_velocity(
-    vector_field: fd.Function, velocity_space: Optional[fd.FunctionSpace] = None, degree: int = 1
+def calculate_darcy_velocity_from_pressure(
+    pressure_field: fd.Function,
+    conductivity: fd.Constant | fd.Function,
+    velocity_space: Optional[fd.FunctionSpace] = None,
+    degree: int = 1,
 ) -> fd.Function:
     """
-    Project the Darcy velocity u = -grad(p_h) into a VectorFunctionSpace.
+    Project the Darcy velocity u = -k * grad(p_h) into a VectorFunctionSpace.
 
-    :param vector_field:
+    :param pressure_field:
         Scalar pressure Function defined on a CG space.
+
+    :param conductivity:
+        Conductivity associated with Darcy's Law.
 
     :param velocity_space:
         Optional pre-built VectorFunctionSpace. If None, a default CG space
@@ -51,10 +57,10 @@ def project_velocity(
         A Firedrake Function representing the velocity field.
     """
     if velocity_space is None:
-        mesh = vector_field.function_space().mesh()
+        mesh = pressure_field.function_space().mesh()
         velocity_space = fd.VectorFunctionSpace(mesh, "CG", degree)
 
-    return fd.project(-fd.grad(vector_field), velocity_space)
+    return fd.project(-conductivity * fd.grad(pressure_field), velocity_space)
 
 
 def slice_along_x(scalar_field: fd.Function, x_value: float) -> Tuple[np.ndarray, np.ndarray]:
