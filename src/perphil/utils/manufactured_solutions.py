@@ -1,11 +1,10 @@
 import firedrake as fd
+from ufl.core.expr import Expr
 
 from perphil.models.dpp.parameters import DPPParameters
 
 
-def exact_expressions(
-    mesh: fd.Mesh, dpp_params: DPPParameters
-) -> tuple[fd.Expr, fd.Expr, fd.Expr, fd.Expr]:
+def exact_expressions(mesh: fd.Mesh, dpp_params: DPPParameters) -> tuple[Expr, Expr, Expr, Expr]:
     """
     Build analytic UFL expressions for u1, p1, u2, p2.
 
@@ -20,7 +19,7 @@ def exact_expressions(
     """
     # Get DOFs coordinate points
     x, y = fd.SpatialCoordinate(mesh)
-    
+
     # Get the model parameters
     k1 = dpp_params.k1
     assert isinstance(k1, fd.Constant)
