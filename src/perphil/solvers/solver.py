@@ -4,7 +4,6 @@ import logging
 
 from perphil.models.dpp.parameters import DPPParameters
 from perphil.forms.dpp import dpp_delayed_form, dpp_form, dpp_splitted_form
-from perphil.solvers.parameters import LINEAR_SOLVER_PARAMS
 
 logger = logging.getLogger(__name__)
 
@@ -103,8 +102,8 @@ def solve_dpp_picard(
     model_params: DPPParameters,
     bcs_macro: List[fd.DirichletBC],
     bcs_micro: List[fd.DirichletBC],
-    additional_macro_solver_options: Dict = {},
-    additional_micro_solver_options: Dict = {},
+    macro_solver_parameters: Dict = {},
+    micro_solver_parameters: Dict = {},
     picard_damping_parameter: fd.Constant = fd.Constant(1),
     picard_rel_error: float = 1e-12,
     picard_max_iteration_number: int = 10000,
@@ -121,10 +120,10 @@ def solve_dpp_picard(
     :type bcs_macro: List[fd.DirichletBC]
     :param bcs_micro: _description_
     :type bcs_micro: List[fd.DirichletBC]
-    :param additional_macro_solver_options: _description_, defaults to {}
-    :type additional_macro_solver_options: Dict, optional
-    :param additional_micro_solver_options: _description_, defaults to {}
-    :type additional_micro_solver_options: Dict, optional
+    :param macro_solver_parameters: _description_, defaults to {}
+    :type macro_solver_parameters: Dict, optional
+    :param micro_solver_parameters: _description_, defaults to {}
+    :type micro_solver_parameters: Dict, optional
     :param picard_damping_parameter: _description_, defaults to fd.Constant(1)
     :type picard_damping_parameter: fd.Constant, optional
     :param picard_rel_error: _description_, defaults to 1e-12
@@ -150,7 +149,6 @@ def solve_dpp_picard(
     problem_macro = fd.LinearVariationalProblem(
         a_macro, L_macro, solution_macro, bcs=[bcs_macro], constant_jacobian=True
     )
-    macro_solver_parameters = {**additional_macro_solver_options, **LINEAR_SOLVER_PARAMS}
     solver_macro = fd.LinearVariationalSolver(
         problem_macro, solver_parameters=macro_solver_parameters
     )
@@ -160,7 +158,6 @@ def solve_dpp_picard(
     problem_micro = fd.LinearVariationalProblem(
         a_micro, L_micro, solution_micro, bcs=[bcs_micro], constant_jacobian=True
     )
-    micro_solver_parameters = {**additional_micro_solver_options, **LINEAR_SOLVER_PARAMS}
     solver_micro = fd.LinearVariationalSolver(
         problem_micro, solver_parameters=micro_solver_parameters
     )
