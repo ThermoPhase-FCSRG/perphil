@@ -46,3 +46,30 @@ def plot_vector_field(
     ax.set_title(title)
     fig.colorbar(q)
     plt.show()
+
+
+def plot_2d_mesh(
+    mesh: fd.Mesh, title: str = "Mesh", boundary_color: str = "black", edge_color: str = "black"
+) -> None:
+    """
+    TODO.
+
+    :param mesh: _description_
+    :type mesh: fd.Mesh
+    :param title: _description_, defaults to "Mesh"
+    :type title: str, optional
+    :param boundary_color: _description_, defaults to "black"
+    :type boundary_color: str, optional
+    :param edge_color: _description_, defaults to "black"
+    :type edge_color: str, optional
+    """
+    _, axes = plt.subplots()
+    fd.triplot(
+        mesh,
+        axes=axes,
+        interior_kw={"edgecolors": edge_color},
+        boundary_kw={"colors": boundary_color},
+    )
+    axes.set_aspect("equal")
+    axes.set_title(title)
+    plt.show()
