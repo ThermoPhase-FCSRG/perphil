@@ -124,7 +124,7 @@ def dpp_form(W: fd.FunctionSpace, model_params: DPPParameters) -> Tuple[fd.Form,
 
     a_macro, L_macro = _macro_scale_form((p1, q1), p2, k1, mu, beta)
 
-    a_micro, L_micro = _micro_scale_form(p1, (p2, q2), k2, mu, beta)
+    a_micro, L_micro = _micro_scale_form((p2, q2), p1, k2, mu, beta)
 
     a = a_macro + a_micro
     L = L_macro + L_micro
