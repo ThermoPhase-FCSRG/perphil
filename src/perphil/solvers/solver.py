@@ -4,7 +4,7 @@ import logging
 
 from perphil.models.dpp.parameters import DPPParameters
 from perphil.forms.dpp import dpp_delayed_form, dpp_form, dpp_splitted_form
-from perphil.solvers.parameters import LINEAR_SOLVER_PARAMS, RICHARDSON_SOLVER_PARAMS
+from perphil.solvers.parameters import LINEAR_SOLVER_PARAMS
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +14,7 @@ def solve_dpp(
     model_params: DPPParameters,
     bcs: List[fd.DirichletBC],
     solver_parameters: Dict = {},
+    options_prefix: str = "dpp",
 ) -> fd.Function:
     """
     Solve the monolithic/preconditioned double-porosity/permeability linear system.
@@ -30,6 +31,9 @@ def solve_dpp(
     :param solver_parameters:
         PETSc solver parameters to be employed.
 
+    :param options_prefix:
+        Prefix for solver options (default: "dpp").
+
     :return:
         A Function on W containing the solution (p1, p2).
 
@@ -42,22 +46,24 @@ def solve_dpp(
     a, L = dpp_form(W, model_params)
     solution = fd.Function(W)
     problem = fd.LinearVariationalProblem(a, L, solution, bcs=bcs)
-    solver = fd.LinearVariationalSolver(problem, solver_parameters=solver_parameters)
+    solver = fd.LinearVariationalSolver(
+        problem, solver_parameters=solver_parameters, options_prefix=options_prefix
+    )
     solver.solve()
     return solution
 
 
-def solve_dpp_richardson(
+def solve_dpp_nonlinear(
     W: fd.FunctionSpace,
     model_params: DPPParameters,
     bcs: List[fd.DirichletBC],
-    additional_solver_options: Dict = {},
-    options_prefix: str = "dpp",
+    solver_parameters: Dict = {},
+    options_prefix: str = "dpp_nonlinear",
 ) -> fd.Function:
     """
-    Solve the double-porosity/permeability system using Richardson iterations from PETSc.
+    Solve the double-porosity/permeability system using nonlinear (SNES) PETSc infrastructure.
 
-    This solver uses the Richardson/Picard as defined and managed internally by PETSc.
+    This solver allows the use of Richardson/Picard methods as defined and managed internally by PETSc.
 
     :param W:
         MixedFunctionSpace for (p1, p2) unknowns.
@@ -68,12 +74,11 @@ def solve_dpp_richardson(
     :param bcs:
         List of DirichletBC objects applied to W.
 
-    :param additional_solver_options:
-        PETSc solver parameter dictionary containing options to be added to pre-defined
-        Richardson solver parameters.
+    :param solver_parameters:
+        PETSc solver parameter dictionary options.
 
     :param options_prefix:
-        Prefix for solver options (default: "dpp").
+        Prefix for solver options (default: "dpp_nonlinear").
 
     :return:
         A Function on W containing the converged solution (p1, p2).
@@ -86,7 +91,6 @@ def solve_dpp_richardson(
 
     F, fields = dpp_splitted_form(W, model_params)
     problem = fd.NonlinearVariationalProblem(F, fields, bcs=bcs)
-    solver_parameters = {**additional_solver_options, **RICHARDSON_SOLVER_PARAMS}
     solver = fd.NonlinearVariationalSolver(
         problem, solver_parameters=solver_parameters, options_prefix=options_prefix
     )
