@@ -137,7 +137,7 @@ def dpp_delayed_form(
     model_params: DPPParameters,
     macro_pressure_initial_values: fd.Function,
     micro_pressure_initial_values: fd.Function,
-) -> Tuple[fd.Form, fd.Form]:
+) -> Tuple[Tuple[fd.Form, fd.Form], Tuple[fd.Form, fd.Form]]:
     """
     Build the bilinear and linear forms for the double-porosity/permeability system with delayed
     pressure fields.
