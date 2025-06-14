@@ -285,8 +285,10 @@ def install_firedrake(c):
 
     print("\nVerifying the installation …")
     try:
+        os.environ["OMP_NUM_THREADS"] = "1"
         c.run(f"{prefix} firedrake-check", echo=True, pty=True)
         _task_screen_log("✔ Firedrake installed successfully.", color="green")
+        os.environ.pop("OMP_NUM_THREADS", None)
     except Exception as e:
         raise Exit(f"Failed to import Firedrake: {e}")
 
