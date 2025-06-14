@@ -98,7 +98,8 @@ def solve_dpp_nonlinear(
 
 
 def solve_dpp_picard(
-    W: fd.FunctionSpace,
+    macro_function_space: fd.FunctionSpace,
+    micro_function_space: fd.FunctionSpace,
     model_params: DPPParameters,
     bcs_macro: List[fd.DirichletBC],
     bcs_micro: List[fd.DirichletBC],
@@ -112,8 +113,10 @@ def solve_dpp_picard(
     """
     TODO.
 
-    :param W: _description_
-    :type W: fd.FunctionSpace
+    :param macro_function_space: _description_
+    :type macro_function_space: fd.FunctionSpace
+    :param micro_function_space: _description_
+    :type micro_function_space: fd.FunctionSpace
     :param model_params: _description_
     :type model_params: DPPParameters
     :param bcs_macro: _description_
@@ -135,28 +138,38 @@ def solve_dpp_picard(
     :return: _description_
     :rtype: Tuple[fd.Function, fd.Function]
     """
+    # Alias for the function spaces
+    V_macro = macro_function_space
+    V_micro = micro_function_space
+
     # Initial guess for pressure fields to be used in Picard iterations
-    p1_old = fd.interpolate(fd.Constant(0), W.sub(0))
-    p2_old = fd.interpolate(fd.Constant(0), W.sub(1))
+    p1_old = fd.interpolate(fd.Constant(0), V_macro)
+    p2_old = fd.interpolate(fd.Constant(0), V_micro)
 
     # Retrieve variation forms by scale
-    forms_macro, forms_micro = dpp_delayed_form(W, model_params, p1_old, p2_old)
+    forms_macro, forms_micro = dpp_delayed_form(V_macro, V_micro, model_params, p1_old, p2_old)
     a_macro, L_macro = forms_macro
     a_micro, L_micro = forms_micro
 
     ## Macro
-    solution_macro = fd.Function(W.sub(0))
+    solution_macro = fd.Function(V_macro)
     problem_macro = fd.LinearVariationalProblem(
-        a_macro, L_macro, solution_macro, bcs=[bcs_macro], constant_jacobian=True
+        a_macro,
+        L_macro,
+        solution_macro,
+        bcs=bcs_macro,
     )
     solver_macro = fd.LinearVariationalSolver(
         problem_macro, solver_parameters=macro_solver_parameters
     )
 
     ## Micro
-    solution_micro = fd.Function(W.sub(1))
+    solution_micro = fd.Function(V_micro)
     problem_micro = fd.LinearVariationalProblem(
-        a_micro, L_micro, solution_micro, bcs=[bcs_micro], constant_jacobian=True
+        a_micro,
+        L_micro,
+        solution_micro,
+        bcs=bcs_micro,
     )
     solver_micro = fd.LinearVariationalSolver(
         problem_micro, solver_parameters=micro_solver_parameters

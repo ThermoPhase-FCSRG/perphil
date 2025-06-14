@@ -133,7 +133,8 @@ def dpp_form(W: fd.FunctionSpace, model_params: DPPParameters) -> Tuple[fd.Form,
 
 
 def dpp_delayed_form(
-    W: fd.FunctionSpace,
+    macro_function_space: fd.FunctionSpace,
+    micro_function_space: fd.FunctionSpace,
     model_params: DPPParameters,
     macro_pressure_initial_values: fd.Function,
     micro_pressure_initial_values: fd.Function,
@@ -144,8 +145,11 @@ def dpp_delayed_form(
 
     This function is to be used only with the Picard approach.
 
-    :param W:
-        A MixedFunctionSpace for (p1, p2) pressures.
+    :param macro_function_space:
+        A FunctionSpace for macro pressures.
+
+    :param macro_function_space:
+        A FunctionSpace for micro pressures.
 
     :param model_params:
         DPPParameters container with model constants.
@@ -167,14 +171,14 @@ def dpp_delayed_form(
     :raises ValueError:
         If W is not a MixedFunctionSpace.
     """
-    if not hasattr(W, "num_sub_spaces") or W.num_sub_spaces() != 2:
-        raise ValueError(f"Expected a 2-field MixedFunctionSpace, got {type(W)}")
+    V_macro = macro_function_space
+    V_micro = micro_function_space
 
     # Trial and test functions
-    p1 = fd.TrialFunction(W.sub(0))
-    p2 = fd.TrialFunction(W.sub(1))
-    q1 = fd.TestFunction(W.sub(0))
-    q2 = fd.TestFunction(W.sub(1))
+    p1 = fd.TrialFunction(V_macro)
+    p2 = fd.TrialFunction(V_micro)
+    q1 = fd.TestFunction(V_macro)
+    q2 = fd.TestFunction(V_micro)
 
     # Model parameters
     k1 = model_params.k1
