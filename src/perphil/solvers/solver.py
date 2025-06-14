@@ -36,8 +36,8 @@ def solve_dpp(
     :raises ValueError:
         If W is not a MixedFunctionSpace.
     """
-    if not isinstance(W, fd.MixedFunctionSpace):
-        raise ValueError(f"Expected a MixedFunctionSpace for W, got {type(W)}")
+    if not hasattr(W, "num_sub_spaces") or W.num_sub_spaces() != 2:
+        raise ValueError(f"Expected a 2-field MixedFunctionSpace, got {type(W)}")
 
     a, L = dpp_form(W, model_params)
     solution = fd.Function(W)
@@ -82,8 +82,8 @@ def solve_dpp_richardson(
     :raises ValueError:
         If W is not a MixedFunctionSpace.
     """
-    if not isinstance(W, fd.MixedFunctionSpace):
-        raise ValueError(f"Expected a MixedFunctionSpace for W, got {type(W)}")
+    if not hasattr(W, "num_sub_spaces") or W.num_sub_spaces() != 2:
+        raise ValueError(f"Expected a 2-field MixedFunctionSpace, got {type(W)}")
 
     F, fields = dpp_splitted_form(W, model_params)
     problem = fd.NonlinearVariationalProblem(F, fields, bcs=bcs)
