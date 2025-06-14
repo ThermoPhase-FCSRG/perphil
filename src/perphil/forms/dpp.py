@@ -110,8 +110,8 @@ def dpp_form(W: fd.FunctionSpace, model_params: DPPParameters) -> Tuple[fd.Form,
     :raises ValueError:
         If W is not a MixedFunctionSpace.
     """
-    if not isinstance(W, fd.MixedFunctionSpace):
-        raise ValueError(f"Expected a MixedFunctionSpace for W, got {type(W)}")
+    if not hasattr(W, "num_sub_spaces") or W.num_sub_spaces() != 2:
+        raise ValueError(f"Expected a 2-field MixedFunctionSpace, got {type(W)}")
 
     p1, p2 = fd.TrialFunctions(W)
     q1, q2 = fd.TestFunctions(W)
@@ -167,8 +167,8 @@ def dpp_delayed_form(
     :raises ValueError:
         If W is not a MixedFunctionSpace.
     """
-    if not isinstance(W, fd.MixedFunctionSpace):
-        raise ValueError(f"Expected a MixedFunctionSpace for W, got {type(W)}")
+    if not hasattr(W, "num_sub_spaces") or W.num_sub_spaces() != 2:
+        raise ValueError(f"Expected a 2-field MixedFunctionSpace, got {type(W)}")
 
     # Trial and test functions
     p1 = fd.TrialFunction(W.sub(0))
@@ -220,8 +220,8 @@ def dpp_splitted_form(
     :raises ValueError:
         If W is not a MixedFunctionSpace.
     """
-    if not isinstance(W, fd.MixedFunctionSpace):
-        raise ValueError(f"Expected a MixedFunctionSpace for W, got {type(W)}")
+    if not hasattr(W, "num_sub_spaces") or W.num_sub_spaces() != 2:
+        raise ValueError(f"Expected a 2-field MixedFunctionSpace, got {type(W)}")
 
     fields = fd.Function(W)
     p1, p2 = fd.split(fields)
