@@ -2,6 +2,7 @@ import glob
 import os
 from pathlib import Path
 import shlex
+import shutil
 import sys
 import platform
 from invoke import task, exceptions, Exit
@@ -404,3 +405,67 @@ def pair_ipynbs(ctx, src="notebooks/*.ipynb", dry=False):
             ctx.run(" ".join(shlex.quote(x) for x in cmd), pty=(_HOST_SYSTEM != "Windows"))
 
     print(f"{len(notebooks)} notebook(s) {'would be paired' if dry else 'paired'}.")
+
+
+@task
+def dev_install(ctx):
+    """
+    Install perphil in the virtual environment.
+    """
+    task_output_message = "Installing perphil in the active environment"
+    _task_screen_log(task_output_message)
+    base_command = 'pip install -e ".[dev]"'
+    host_system = _HOST_SYSTEM
+    if host_system not in _SUPPORTED_SYSTEMS:
+        raise exceptions.Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
+    pty_flag = True if host_system != "Windows" else False
+    ctx.run(base_command, pty=pty_flag)
+
+
+@task(
+    help={
+        "dry": "Show what would be removed without actually deleting",
+    }
+)
+def dev_clean(ctx, dry=False):
+    """
+    Remove perphil build/config dirs:
+      - mypackage.egg-info
+      - dist
+      - build
+      - *_cache
+      - site
+    """
+    patterns = [
+        "*.egg-info",
+        "dist",
+        "build",
+        "*_cache",
+        "site",
+    ]
+
+    # Collect all matching dirs
+    exclude_root = ".venv"  # we need to skip changes in .venv
+    to_remove = []
+    for pat in patterns:
+        for d in Path(".").rglob(pat):
+            if not d.is_dir():
+                continue
+            # skip .venv
+            if exclude_root in d.parts:
+                continue
+            to_remove.append(d)
+
+    if not to_remove:
+        _task_screen_log("Nothing to clean.", color="yellow")
+        return
+
+    for d in to_remove:
+        _task_screen_log(f"{'Would remove:' if dry else 'Removing:  '}{d}", color="yellow")
+        if not dry:
+            shutil.rmtree(d)
+
+    _task_screen_log(
+        f"\n{len(to_remove)} director{'y' if len(to_remove) == 1 else 'ies'} {'would be removed' if dry else 'removed'}.",
+        color="yellow",
+    )
