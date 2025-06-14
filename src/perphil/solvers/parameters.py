@@ -6,15 +6,17 @@ LINEAR_SOLVER_PARAMS: dict = {
     "pc_factor_mat_solver_type": "mumps",
 }
 
-# GMRES + Jacobi parameters for scale-splitting comparison
-GMRES_JACOBI_PARAMS: dict = {
+# Pure GMRES parameters
+GMRES_PARAMS: dict = {
     "mat_type": "aij",
-    "pc_type": "jacobi",
     "ksp_type": "gmres",
     "ksp_rtol": 1.0e-12,
     "ksp_atol": 1.0e-12,
     "ksp_max_it": 5000,
 }
+
+# GMRES + Jacobi parameters for scale-splitting comparison
+GMRES_JACOBI_PARAMS: dict = {"pc_type": "jacobi", **GMRES_PARAMS}
 
 # Field-split preconditioner (multiplicative) with LU in each block
 FIELDSPLIT_LU_PARAMS: dict = {
