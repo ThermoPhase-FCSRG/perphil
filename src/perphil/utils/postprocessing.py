@@ -17,8 +17,8 @@ def split_dpp_solution(dpp_solution: fd.Function) -> Tuple[fd.Function, fd.Funct
         If the solution's function space is not a MixedFunctionSpace.
     """
     W = dpp_solution.function_space()
-    if not isinstance(W, fd.MixedFunctionSpace):
-        raise ValueError(f"Expected solution on MixedFunctionSpace, got {type(W)}")
+    if not hasattr(W, "num_sub_spaces") or W.num_sub_spaces() != 2:
+        raise ValueError(f"Expected a 2-field MixedFunctionSpace, got {type(W)}")
 
     V1 = W.sub(0)
     V2 = W.sub(1)
