@@ -13,10 +13,10 @@ def solve_dpp(
     W: fd.FunctionSpace,
     model_params: DPPParameters,
     bcs: List[fd.DirichletBC],
-    additional_solver_options: Dict = {},
+    solver_parameters: Dict = {},
 ) -> fd.Function:
     """
-    Solve the monolithic double-porosity/permeability linear system.
+    Solve the monolithic/preconditioned double-porosity/permeability linear system.
 
     :param W:
         MixedFunctionSpace for (p1, p2) pressures.
@@ -27,8 +27,8 @@ def solve_dpp(
     :param bcs:
         List of DirichletBC objects applied to W.
 
-    :param additional_solver_options:
-        PETSc solver parameter dictionary to be added to the monolithic solver.
+    :param solver_parameters:
+        PETSc solver parameters to be employed.
 
     :return:
         A Function on W containing the solution (p1, p2).
@@ -42,7 +42,6 @@ def solve_dpp(
     a, L = dpp_form(W, model_params)
     solution = fd.Function(W)
     problem = fd.LinearVariationalProblem(a, L, solution, bcs=bcs)
-    solver_parameters = {**additional_solver_options, **LINEAR_SOLVER_PARAMS}
     solver = fd.LinearVariationalSolver(problem, solver_parameters=solver_parameters)
     solver.solve()
     return solution
