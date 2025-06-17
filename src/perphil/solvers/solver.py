@@ -1,6 +1,7 @@
 from typing import List, Dict, Tuple
 import attr
 import firedrake as fd
+from petsc4py import PETSc
 import logging
 
 import numpy as np
@@ -129,7 +130,7 @@ def solve_dpp_picard(
     picard_rel_error: float = 1e-12,
     picard_max_iteration_number: int = 10000,
     picard_enable_logging: bool = True,
-) -> Tuple[fd.Function, fd.Function]:
+) -> Solution:
     """
     TODO.
 
@@ -196,7 +197,11 @@ def solve_dpp_picard(
     )
 
     ## Picard loop
-    solution_macro, solution_micro = _run_picard_iterations_for_dpp(
+    solution_data = _run_picard_iterations_for_dpp(
+        (a_macro, L_macro),
+        (a_micro, L_micro),
+        bcs_macro,
+        bcs_micro,
         solver_macro,
         solver_micro,
         solution_macro,
@@ -204,14 +209,18 @@ def solve_dpp_picard(
         p1_old,
         p2_old,
         picard_damping_parameter=picard_damping_parameter,
-        picard_rel_error=picard_rel_error,
+        picard_rtol=picard_rel_error,
         picard_max_iteration_number=picard_max_iteration_number,
         enable_logging=picard_enable_logging,
     )
-    return solution_macro, solution_micro
+    return solution_data
 
 
 def _run_picard_iterations_for_dpp(
+    forms_macro: Tuple[fd.Form, fd.Form],
+    forms_micro: Tuple[fd.Form, fd.Form],
+    bcs_macro: List[fd.DirichletBC],
+    bcs_micro: List[fd.DirichletBC],
     solver_macro: fd.LinearVariationalSolver,
     solver_micro: fd.LinearVariationalSolver,
     macro_pressure_field: fd.Function,
@@ -219,10 +228,11 @@ def _run_picard_iterations_for_dpp(
     macro_pressure_initial_solution: fd.Function,
     micro_pressure_initial_solution: fd.Function,
     picard_damping_parameter: fd.Constant = fd.Constant(1),
-    picard_rel_error: float = 1e-12,
+    picard_rtol: float = 1e-5,  # To match PETSc default
+    picard_atol: float = 1e-12,  # To match PETSc default (which is 0.0, actually)
     picard_max_iteration_number: int = 10000,
     enable_logging: bool = True,
-) -> Tuple[fd.Function, fd.Function]:
+) -> Solution:
     """
     TODO.
 
@@ -254,38 +264,112 @@ def _run_picard_iterations_for_dpp(
     solution_micro = micro_pressure_field
     p1_old = macro_pressure_initial_solution
     p2_old = micro_pressure_initial_solution
-    rtol, maxit = picard_rel_error, picard_max_iteration_number
+
+    # Retrieve the bilinear/linear forms
+    ## Macro
+    a_macro_form, L_macro_form = forms_macro
+
+    ## Micro
+    a_micro_form, L_micro_form = forms_micro
+
+    # Assemble PETSc matrices & RHS once
+    A_macro = fd.assemble(a_macro_form, bcs=bcs_macro, mat_type="aij").M.handle
+    b_macro = fd.assemble(L_macro_form, bcs=bcs_macro)
+    bvec_macro = b_macro.vector()
+
+    A_micro = fd.assemble(a_micro_form, bcs=bcs_micro, mat_type="aij").M.handle
+    b_micro = fd.assemble(L_micro_form, bcs=bcs_micro)
+    bvec_micro = b_micro.vector()
+
+    # Initial guess = zero
+    solution_macro.vector().set(0.0)
+    solution_micro.vector().set(0.0)
+
+    # Compute initial residual norm r0 = || [A x0 – b] ||
+    r0_m = bvec_macro.duplicate()
+    A_macro.mult(solution_macro.vector(), r0_m)
+    r0_m.axpy(-1.0, bvec_macro)
+    r0_μ = bvec_micro.duplicate()
+    A_micro.mult(solution_micro.vector(), r0_μ)
+    r0_μ.axpy(-1.0, bvec_micro)
+    r0 = np.hypot(r0_m.norm(PETSc._PETSc.NORM_2), r0_μ.norm(PETSc._PETSc.NORM_2))
+
+    rtol, maxit = picard_rtol, picard_max_iteration_number
     damping_parameter = picard_damping_parameter
-    for i in range(1, maxit + 1):
-        # Macro sub-system
-        solver_macro.solve()  # macro with micro fixed
-        p1_old_k = p1_old.copy(deepcopy=True)
-        p1_old.assign((1 - damping_parameter) * p1_old + damping_parameter * solution_macro)
+    solution_residual_error = r0
+    solution_iteration_number = 0
 
-        # Micro sub-system
-        solver_micro.solve()  # micro with macro fixed
-        p2_old_k = p2_old.copy(deepcopy=True)
-        p2_old.assign((1 - damping_parameter) * p2_old + damping_parameter * solution_micro)
+    for i in range(1, picard_max_iteration_number + 1):
+        # 1) Solve for the *new* macro pressure
+        solver_macro.solve()
+        # 2) Update p1_old ← (1–α)*p1_old + α*p1_new
+        p1_old.assign(
+            (1 - picard_damping_parameter) * p1_old + picard_damping_parameter * solution_macro
+        )
 
-        # Errors and residuals
-        p1_residual = fd.norm(solution_macro - p1_old_k)
-        p2_residual = fd.norm(solution_micro - p2_old_k)
-        p1_rel_error = p1_residual / fd.norm(solution_macro)
-        p2_rel_error = p2_residual / fd.norm(solution_micro)
+        # 3) Solve for the *new* micro pressure (with updated p1_old in the forms)
+        solver_micro.solve()
+        # 4) Update p2_old ← (1–α)*p2_old + α*p2_new
+        p2_old.assign(
+            (1 - picard_damping_parameter) * p2_old + picard_damping_parameter * solution_micro
+        )
+
+        # 5) Compute algebraic residuals using the *current* p1_old/p2_old
+        xvec_macro = solution_macro.vector()
+        xvec_micro = solution_micro.vector()
+
+        r_m = bvec_macro.copy()
+        A_macro.mult(xvec_macro, r_m)
+        r_m.axpy(-1.0, bvec_macro)
+        norm_m = r_m.norm(PETSc._PETSc.NORM_2)
+
+        r_μ = bvec_micro.copy()
+        A_micro.mult(xvec_micro, r_μ)
+        r_μ.axpy(-1.0, bvec_micro)
+        norm_μ = r_μ.norm(PETSc._PETSc.NORM_2)
+
+        r = np.hypot(norm_m, norm_μ)
         if enable_logging:
-            logger.info(
-                f"Picard iteration: {i}; p1 rel error = {p1_rel_error}; p2 rel error = {p2_rel_error}"
-            )
+            logger.info(f"Picard it {i}, ||res|| = {r:e}")
 
-        # Convergence check
-        if max(p1_rel_error, p2_rel_error) < rtol:
-            logger.info(f"Converged in {i} Picard steps")
-            break
+        if r <= picard_atol + picard_rtol * r0:
+            return Solution((solution_macro, solution_micro), i, r)
 
-        # Update fully staggered pressures according to Picard's fixed-point method
-        # p1_old.assign((1 - damping_parameter) * p1_old + damping_parameter * solution_macro)
-        # p2_old.assign((1 - damping_parameter) * p2_old + damping_parameter * solution_micro)
-    else:
-        logger.error("Picard did not converge in", maxit)
-        raise RuntimeError("DPP Picard iterations diverged.")
-    return solution_macro, solution_micro
+    # for i in range(1, maxit + 1):
+    #     # Macro sub-system
+    #     solver_macro.solve()  # macro with micro fixed
+    #     p1_old.assign((1 - damping_parameter) * p1_old + damping_parameter * solution_macro)
+
+    #     # Micro sub-system
+    #     solver_micro.solve()  # micro with macro fixed
+    #     p2_old.assign((1 - damping_parameter) * p2_old + damping_parameter * solution_micro)
+
+    #     # Update errors and residuals
+    #     R_macro_iteration = fd.assemble(Rf_macro)
+    #     R_micro_iteration = fd.assemble(Rf_micro)
+    #     norm_residual  = np.sqrt(R_macro_iteration.dat.norm()**2 + R_micro_iteration.dat.norm()**2)
+
+    #     # Update tracking vars
+    #     solution_iteration_number = i
+    #     solution_residual_error = norm_residual
+
+    #     if enable_logging:
+    #         logger.info(
+    #             f"Picard iteration: {i}; residual = {norm_residual}"
+    #         )
+
+    #     # Convergence check
+    #     if norm_residual <= picard_atol + picard_rtol * r0:
+    #         logger.info(f"Converged in {i} Picard steps")
+    #         break
+
+    #     # Update fully staggered pressures according to Picard's fixed-point method
+    #     # p1_old.assign((1 - damping_parameter) * p1_old + damping_parameter * solution_macro)
+    #     # p2_old.assign((1 - damping_parameter) * p2_old + damping_parameter * solution_micro)
+    # else:
+    #     logger.error("Picard did not converge in", maxit)
+    #     raise RuntimeError("DPP Picard iterations diverged.")
+
+    # solution = (solution_macro, solution_micro)
+    # solution_data = Solution(solution, solution_iteration_number, solution_residual_error)
+    return solution_data
