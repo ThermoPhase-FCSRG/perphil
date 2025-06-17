@@ -59,7 +59,10 @@ def get_matrix_data_from_form(
     sparse_csr_data = csr_matrix(petsc_matrix.getValuesCSR()[::-1], shape=petsc_data_memory_size)
     sparse_csr_data.eliminate_zeros()  # Note: in-place operation
     number_of_nonzero_entries = sparse_csr_data.nnz
-    number_of_dofs = petsc_data_memory_size
+    matrix_number_of_rows, matrix_number_of_columns = petsc_data_memory_size
+    assert matrix_number_of_rows == matrix_number_of_columns
+    # DoFs must be equal to the number of rows/cols of the resulting algebraic systen
+    number_of_dofs = matrix_number_of_rows
 
     matrix_data = MatrixData(
         assembled_matrix,
