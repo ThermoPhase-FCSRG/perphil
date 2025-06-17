@@ -39,6 +39,15 @@ RICHARDSON_SOLVER_PARAMS: dict = {
     **FIELDSPLIT_LU_PARAMS,
 }
 
+# Picard (with nonlinear Gauss-Siedel) solver parameters with field-split
+NGS_SOLVER_PARAMS = {
+    "snes_type": "ngs",
+    "snes_max_it": 10000,
+    "snes_rtol": 1e-5,
+    "snes_atol": 1e-12,
+    **FIELDSPLIT_LU_PARAMS,
+}
+
 # SNES with KSP-only (for preconditioner analysis)
 KSP_PREONLY_PARAMS: dict = {
     "snes_type": "ksponly",
