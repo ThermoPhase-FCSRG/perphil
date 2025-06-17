@@ -1,11 +1,25 @@
 from typing import List, Dict, Tuple
+import attr
 import firedrake as fd
 import logging
+
+import numpy as np
 
 from perphil.models.dpp.parameters import DPPParameters
 from perphil.forms.dpp import dpp_delayed_form, dpp_form, dpp_splitted_form
 
 logger = logging.getLogger(__name__)
+
+
+@attr.define(frozen=True)
+class Solution:
+    """
+    TODO.
+    """
+
+    solution: fd.Function | Tuple[fd.Function, fd.Function]
+    iteration_number: int
+    residual_error: float | np.float64
 
 
 def solve_dpp(
@@ -14,7 +28,7 @@ def solve_dpp(
     bcs: List[fd.DirichletBC],
     solver_parameters: Dict = {},
     options_prefix: str = "dpp",
-) -> fd.Function:
+) -> Solution:
     """
     Solve the monolithic/preconditioned double-porosity/permeability linear system.
 
@@ -49,7 +63,10 @@ def solve_dpp(
         problem, solver_parameters=solver_parameters, options_prefix=options_prefix
     )
     solver.solve()
-    return solution
+    num_iterations = solver.snes.ksp.getIterationNumber()
+    residual_error = solver.snes.ksp.getResidualNorm()
+    solution_data = Solution(solution, num_iterations, residual_error)
+    return solution_data
 
 
 def solve_dpp_nonlinear(
@@ -58,7 +75,7 @@ def solve_dpp_nonlinear(
     bcs: List[fd.DirichletBC],
     solver_parameters: Dict = {},
     options_prefix: str = "dpp_nonlinear",
-) -> fd.Function:
+) -> Solution:
     """
     Solve the double-porosity/permeability system using nonlinear (SNES) PETSc infrastructure.
 
@@ -94,7 +111,10 @@ def solve_dpp_nonlinear(
         problem, solver_parameters=solver_parameters, options_prefix=options_prefix
     )
     solver.solve()
-    return fields
+    num_iterations = solver.snes.getIterationNumber()
+    residual_error = solver.snes.getFunctionNorm()
+    solution_data = Solution(fields, num_iterations, residual_error)
+    return solution_data
 
 
 def solve_dpp_picard(
