@@ -9,20 +9,19 @@ os.environ["OMP_NUM_THREADS"] = "1"
 
 import firedrake as fd
 
-# import petsc4py
-# import numpy as np
-# from scipy.sparse import csr_matrix
-# from scipy.linalg import svd
-# from scipy.sparse.linalg import svds
 import logging
 
 from perphil.forms.spaces import create_function_spaces
+from perphil.forms.dpp import dpp_form
 from perphil.mesh.builtin import create_mesh
 from perphil.models.dpp.parameters import DPPParameters
+from perphil.solvers.conditioning import (
+    get_matrix_data_from_form,
+    calculate_condition_number,
+)
 from perphil.solvers.solver import (
     solve_dpp,
     solve_dpp_nonlinear,
-    solve_dpp_picard,
     logger,
 )
 from perphil.solvers.parameters import (
@@ -60,7 +59,7 @@ cos = fd.cos
 # ### Mesh
 
 # %%
-mesh = create_mesh(20, 20, quadrilateral=True)
+mesh = create_mesh(10, 10, quadrilateral=True)
 
 # %%
 plot_2d_mesh(mesh)
@@ -101,7 +100,10 @@ bc_micro = fd.DirichletBC(W.sub(1), p2_exact, "on_boundary")
 bcs = [bc_macro, bc_micro]
 
 solver_parameters = LINEAR_SOLVER_PARAMS
-solution_monolithic = solve_dpp(W, dpp_params, bcs, solver_parameters=solver_parameters)
+solution_data_monolithic = solve_dpp(
+    W, dpp_params, bcs, solver_parameters=solver_parameters
+)
+solution_monolithic = solution_data_monolithic.solution
 p1_monolithic, p2_monolithic = split_dpp_solution(solution_monolithic)
 
 u1_monolithic = calculate_darcy_velocity_from_pressure(p1_monolithic, dpp_params.k1)
@@ -156,11 +158,15 @@ plt.show()
 # %%
 solver_monitoring_param = {
     "ksp_monitor": None,
+    "snes_rtol": 0,
+    "snes_atol": 0,
+    "snes_stol": 1e-8,
 }
 solver_parameters = {**GMRES_PARAMS, **FIELDSPLIT_LU_PARAMS, **solver_monitoring_param}
-solution_preconditioned = solve_dpp(
+solution_data_preconditioned = solve_dpp(
     W, dpp_params, bcs, solver_parameters=solver_parameters
 )
+solution_preconditioned = solution_data_preconditioned.solution
 p1_preconditioned, p2_preconditioned = split_dpp_solution(solution_preconditioned)
 
 u1_preconditioned = calculate_darcy_velocity_from_pressure(
@@ -176,9 +182,10 @@ solver_monitoring_param = {
     "ksp_monitor": None,
 }
 solver_parameters = {**GMRES_JACOBI_PARAMS, **solver_monitoring_param}
-solution_gmres_jacobi = solve_dpp(
+solution_data_gmres_jacobi = solve_dpp(
     W, dpp_params, bcs, solver_parameters=solver_parameters
 )
+solution_gmres_jacobi = solution_data_gmres_jacobi.solution
 p1_gmres_jacobi, p2_gmres_jacobi = split_dpp_solution(solution_gmres_jacobi)
 
 u1_gmres_jacobi = calculate_darcy_velocity_from_pressure(p1_gmres_jacobi, dpp_params.k1)
@@ -217,11 +224,15 @@ plt.show()
 # %%
 solver_monitoring_param = {
     "snes_monitor": None,
+    "snes_rtol": 0,
+    "snes_atol": 0,
+    "snes_stol": 1e-8,
 }
 solver_parameters = {**RICHARDSON_SOLVER_PARAMS, **solver_monitoring_param}
-solution_richardson = solve_dpp_nonlinear(
+solution_data_richardson = solve_dpp_nonlinear(
     W, dpp_params, bcs, solver_parameters=solver_parameters
 )
+solution_richardson = solution_data_richardson.solution
 p1_richardson, p2_richardson = split_dpp_solution(solution_richardson)
 
 u1_richardson = calculate_darcy_velocity_from_pressure(p1_richardson, dpp_params.k1)
@@ -270,24 +281,46 @@ handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
 logger.addHandler(handler)
 
 # %%
-solver_parameters = {
-    **LINEAR_SOLVER_PARAMS,
+solver_monitoring_param = {
+    "snes_monitor": None,
 }
-bc_macro = fd.DirichletBC(V, p1_exact, "on_boundary")
-bc_micro = fd.DirichletBC(V, p2_exact, "on_boundary")
-p1_picard, p2_picard = solve_dpp_picard(
-    V,
-    V,
-    dpp_params,
-    bcs_macro=[bc_macro],
-    bcs_micro=[bc_micro],
-    macro_solver_parameters=solver_parameters,
-    micro_solver_parameters=solver_parameters,
+NGS_SOLVER_PARAMS = {
+    "snes_type": "ngs",
+    "snes_max_it": 10000,
+    "snes_stol": 1e-8,
+    **FIELDSPLIT_LU_PARAMS,
+}
+solver_parameters = {**NGS_SOLVER_PARAMS, **solver_monitoring_param}
+solution_data_ngs = solve_dpp_nonlinear(
+    W, dpp_params, bcs, solver_parameters=solver_parameters
 )
+solution_ngs = solution_data_ngs.solution
+p1_picard, p2_picard = split_dpp_solution(solution_ngs)
 
 u1_picard = calculate_darcy_velocity_from_pressure(p1_picard, dpp_params.k1)
 
 u2_picard = calculate_darcy_velocity_from_pressure(p2_picard, dpp_params.k2)
+
+# %%
+# solver_parameters = {
+#     **LINEAR_SOLVER_PARAMS,
+# }
+# bc_macro = fd.DirichletBC(V, p1_exact, "on_boundary")
+# bc_micro = fd.DirichletBC(V, p2_exact, "on_boundary")
+# solution_data_picard = solve_dpp_picard(
+#     V,
+#     V,
+#     dpp_params,
+#     bcs_macro=[bc_macro],
+#     bcs_micro=[bc_micro],
+#     macro_solver_parameters=solver_parameters,
+#     micro_solver_parameters=solver_parameters,
+# )
+# p1_picard, p2_picard = solution_data_picard.solution
+
+# u1_picard = calculate_darcy_velocity_from_pressure(p1_picard, dpp_params.k1)
+
+# u2_picard = calculate_darcy_velocity_from_pressure(p2_picard, dpp_params.k2)
 
 # %%
 y_points, p1_picard_at_x_mid_point = slice_along_x(p1_picard, x_value=x_mid_point)
@@ -332,7 +365,16 @@ plt.show()
 # ##### Monolithic system
 
 # %% [markdown]
-# Define the variational form:
+# Get the variational form:
+
+# %%
+monolithic_lhs_form, _ = dpp_form(W=W, model_params=dpp_params)
+matrix_data = get_matrix_data_from_form(monolithic_lhs_form, boundary_conditions=bcs)
+monolithic_system_condition_number = calculate_condition_number(
+    matrix_data.sparse_csr_data,
+    num_of_factors=matrix_data.number_of_dofs - 1,
+)
+print(f"Monolithic system Condition Number: {monolithic_system_condition_number}")
 
 # %%
 # # Approximation degree
