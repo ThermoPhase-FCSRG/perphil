@@ -123,4 +123,6 @@ def solve_dpp_nonlinear(
     num_iterations = solver.snes.getIterationNumber()
     residual_error = solver.snes.getFunctionNorm()
     solution_data = Solution(fields, num_iterations, residual_error)
+
+    assert isinstance(solution_data, Solution)
     return solution_data
