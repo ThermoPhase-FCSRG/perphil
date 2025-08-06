@@ -38,11 +38,11 @@ repos:
 - repo: https://github.com/nbQA-dev/nbQA
   rev: 1.9.1
   hooks:
-    - id: nbqa-ruff
-      args: [--fix]
-      files: ^notebooks/.*\.ipynb$
     - id: nbqa-black
       args: [--quiet]
+      files: ^notebooks/.*\.ipynb$
+    - id: nbqa-ruff
+      args: [--fix]
       files: ^notebooks/.*\.ipynb$
 
 - repo: https://github.com/mwouts/jupytext
