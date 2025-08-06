@@ -9,7 +9,6 @@ os.environ["OMP_NUM_THREADS"] = "1"
 
 import firedrake as fd
 
-import logging
 
 from perphil.forms.spaces import create_function_spaces
 from perphil.forms.dpp import dpp_form
@@ -22,14 +21,14 @@ from perphil.solvers.conditioning import (
 from perphil.solvers.solver import (
     solve_dpp,
     solve_dpp_nonlinear,
-    logger,
 )
 from perphil.solvers.parameters import (
     LINEAR_SOLVER_PARAMS,
     GMRES_PARAMS,
     FIELDSPLIT_LU_PARAMS,
     GMRES_JACOBI_PARAMS,
-    RICHARDSON_SOLVER_PARAMS,
+    GMRES_ILU_PARAMS,
+    NGS_SOLVER_PARAMS,
 )
 from perphil.utils.plotting import plot_2d_mesh, plot_scalar_field, plot_vector_field
 from perphil.utils.manufactured_solutions import interpolate_exact
@@ -156,13 +155,13 @@ plt.show()
 # Pre-conditioner by scale:
 
 # %%
-solver_monitoring_param = {
+solver_additional_param = {
     "ksp_monitor": None,
-    "snes_rtol": 0,
-    "snes_atol": 0,
-    "snes_stol": 1e-8,
+    "snes_monitor": None,
+    "snes_rtol": 1e-8,
+    "snes_atol": 1e-12,
 }
-solver_parameters = {**GMRES_PARAMS, **FIELDSPLIT_LU_PARAMS, **solver_monitoring_param}
+solver_parameters = {**GMRES_PARAMS, **FIELDSPLIT_LU_PARAMS, **solver_additional_param}
 solution_data_preconditioned = solve_dpp(
     W, dpp_params, bcs, solver_parameters=solver_parameters
 )
@@ -178,10 +177,7 @@ u2_preconditioned = calculate_darcy_velocity_from_pressure(
 )
 
 # %%
-solver_monitoring_param = {
-    "ksp_monitor": None,
-}
-solver_parameters = {**GMRES_JACOBI_PARAMS, **solver_monitoring_param}
+solver_parameters = {**GMRES_JACOBI_PARAMS, **solver_additional_param}
 solution_data_gmres_jacobi = solve_dpp(
     W, dpp_params, bcs, solver_parameters=solver_parameters
 )
@@ -191,6 +187,18 @@ p1_gmres_jacobi, p2_gmres_jacobi = split_dpp_solution(solution_gmres_jacobi)
 u1_gmres_jacobi = calculate_darcy_velocity_from_pressure(p1_gmres_jacobi, dpp_params.k1)
 
 u2_gmres_jacobi = calculate_darcy_velocity_from_pressure(p2_gmres_jacobi, dpp_params.k2)
+
+# %%
+solver_parameters = {**GMRES_ILU_PARAMS, **solver_additional_param}
+solution_data_gmres_ilu = solve_dpp(
+    W, dpp_params, bcs, solver_parameters=solver_parameters
+)
+solution_gmres_ilu = solution_data_gmres_ilu.solution
+p1_gmres_ilu, p2_gmres_ilu = split_dpp_solution(solution_gmres_ilu)
+
+u1_gmres_ilu = calculate_darcy_velocity_from_pressure(p1_gmres_ilu, dpp_params.k1)
+
+u2_gmres_ilu = calculate_darcy_velocity_from_pressure(p2_gmres_ilu, dpp_params.k2)
 
 # %%
 y_points, p1_pc_at_x_mid_point = slice_along_x(p1_preconditioned, x_value=x_mid_point)
@@ -219,78 +227,10 @@ plt.title(f"At x= {x_mid_point:.2f}")
 plt.show()
 
 # %% [markdown]
-# PETSc's Richardson iterations:
-
-# %%
-solver_monitoring_param = {
-    "snes_monitor": None,
-    "snes_rtol": 0,
-    "snes_atol": 0,
-    "snes_stol": 1e-8,
-}
-solver_parameters = {**RICHARDSON_SOLVER_PARAMS, **solver_monitoring_param}
-solution_data_richardson = solve_dpp_nonlinear(
-    W, dpp_params, bcs, solver_parameters=solver_parameters
-)
-solution_richardson = solution_data_richardson.solution
-p1_richardson, p2_richardson = split_dpp_solution(solution_richardson)
-
-u1_richardson = calculate_darcy_velocity_from_pressure(p1_richardson, dpp_params.k1)
-
-u2_richardson = calculate_darcy_velocity_from_pressure(p2_richardson, dpp_params.k2)
-
-# %%
-y_points, p1_richardson_at_x_mid_point = slice_along_x(
-    p1_richardson, x_value=x_mid_point
-)
-_, p2_richardson_at_x_mid_point = slice_along_x(p2_richardson, x_value=x_mid_point)
-
-y_points, p1_richardson_at_x_mid_point, p2_richardson_at_x_mid_point
-
-# %%
-figsize = (7, 7)
-plt.figure(figsize=figsize)
-plt.plot(
-    y_points, p1_richardson_at_x_mid_point, "x", ms=10, lw=4, c="k", label="Richardson"
-)
-plt.plot(y_points, p1_exact_at_x_mid_point, lw=4, c="k", label="Exact Solution")
-plt.legend(frameon=False)
-plt.xlabel("y coordinate")
-plt.ylabel(r"Macro Pressure $(p_{1,h})$")
-plt.title(f"At x= {x_mid_point:.2f}")
-plt.show()
-
-plt.figure(figsize=figsize)
-plt.plot(y_points, p2_pc_at_x_mid_point, "x", ms=10, lw=4, c="k", label="Richardson")
-plt.plot(y_points, p2_richardson_at_x_mid_point, lw=4, c="k", label="Exact Solution")
-plt.legend(frameon=False)
-plt.xlabel("y coordinate")
-plt.ylabel(r"Micro Pressure $(p_{2,h})$")
-plt.title(f"At x= {x_mid_point:.2f}")
-plt.show()
-
-# %% [markdown]
 # Loop-based Picard fixed-point iterations:
 
 # %%
-# Set the logger in Picard loop-based to INFO level.
-# This way, iterations are displayed in cell outputs.
-logger.setLevel(logging.INFO)
-handler = logging.StreamHandler()
-handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
-logger.addHandler(handler)
-
-# %%
-solver_monitoring_param = {
-    "snes_monitor": None,
-}
-NGS_SOLVER_PARAMS = {
-    "snes_type": "ngs",
-    "snes_max_it": 10000,
-    "snes_stol": 1e-8,
-    **FIELDSPLIT_LU_PARAMS,
-}
-solver_parameters = {**NGS_SOLVER_PARAMS, **solver_monitoring_param}
+solver_parameters = {**NGS_SOLVER_PARAMS, **solver_additional_param}
 solution_data_ngs = solve_dpp_nonlinear(
     W, dpp_params, bcs, solver_parameters=solver_parameters
 )
@@ -300,27 +240,6 @@ p1_picard, p2_picard = split_dpp_solution(solution_ngs)
 u1_picard = calculate_darcy_velocity_from_pressure(p1_picard, dpp_params.k1)
 
 u2_picard = calculate_darcy_velocity_from_pressure(p2_picard, dpp_params.k2)
-
-# %%
-# solver_parameters = {
-#     **LINEAR_SOLVER_PARAMS,
-# }
-# bc_macro = fd.DirichletBC(V, p1_exact, "on_boundary")
-# bc_micro = fd.DirichletBC(V, p2_exact, "on_boundary")
-# solution_data_picard = solve_dpp_picard(
-#     V,
-#     V,
-#     dpp_params,
-#     bcs_macro=[bc_macro],
-#     bcs_micro=[bc_micro],
-#     macro_solver_parameters=solver_parameters,
-#     micro_solver_parameters=solver_parameters,
-# )
-# p1_picard, p2_picard = solution_data_picard.solution
-
-# u1_picard = calculate_darcy_velocity_from_pressure(p1_picard, dpp_params.k1)
-
-# u2_picard = calculate_darcy_velocity_from_pressure(p2_picard, dpp_params.k2)
 
 # %%
 y_points, p1_picard_at_x_mid_point = slice_along_x(p1_picard, x_value=x_mid_point)
@@ -364,9 +283,6 @@ plt.show()
 # %% [markdown]
 # ##### Monolithic system
 
-# %% [markdown]
-# Get the variational form:
-
 # %%
 monolithic_lhs_form, _ = dpp_form(W=W, model_params=dpp_params)
 matrix_data = get_matrix_data_from_form(monolithic_lhs_form, boundary_conditions=bcs)
@@ -376,161 +292,8 @@ monolithic_system_condition_number = calculate_condition_number(
 )
 print(f"Monolithic system Condition Number: {monolithic_system_condition_number}")
 
-# %%
-# # Approximation degree
-# degree = 1
-
-# # Function space declaration
-# pressure_family = "CG"
-# velocity_family = "CG"
-# U = fd.VectorFunctionSpace(mesh, velocity_family, degree)
-# V = fd.FunctionSpace(mesh, pressure_family, degree)
-# W = V * V
-
-# # Trial and test functions
-# dpp_fields = fd.Function(W)
-# p1, p2 = fd.TrialFunctions(W)
-# q1, q2 = fd.TestFunctions(W)
-
-# # Forcing function
-# f = fd.Constant(0.0)
-
-# # Dirichlet BCs
-# bc_macro = fd.DirichletBC(W.sub(0), p1_exact, "on_boundary")
-# bc_micro = fd.DirichletBC(W.sub(1), p2_exact, "on_boundary")
-# bcs = [bc_macro, bc_micro]
-
-# # Variational form
-# ## Mass transfer term
-# xi = -beta / mu * (p1 - p2)
-
-# ## Macro terms
-# a = (k1 / mu) * inner(grad(p1), grad(q1)) * dx - xi * q1 * dx
-# L = f * q1 * dx
-
-# ## Micro terms
-# a += (k2 / mu) * inner(grad(p2), grad(q2)) * dx + xi * q2 * dx
-# L += f * q2 * dx
-
-# # Isolate LHS
-# F = a - L
-# a_form = fd.lhs(F)
-
-# %% [markdown]
-# Assemble and get the associated matrix:
-
-# %%
-# A = fd.assemble(a_form, bcs=bcs, mat_type="aij")
-# petsc_mat = A.M.handle
-# is_symmetric = petsc_mat.isSymmetric(tol=1e-8)
-# size = petsc_mat.getSize()
-# Mnp = csr_matrix(petsc_mat.getValuesCSR()[::-1], shape=size)
-
-# %% [markdown]
-# Get DoF number and clean matrix:
-
-# %%
-# Mnp.eliminate_zeros()
-# nnz = Mnp.nnz
-# number_of_dofs = W.dim()
-# num_of_factors = int(number_of_dofs) - 1
-
-# print(f"Number of Degrees of Freedom: {number_of_dofs}")
-# print(f"Number of non-zero entries: {nnz}")
-# print(f"Is operator symmetric? {is_symmetric}")
-# print(f"Number of factors to compute in SVD: {num_of_factors}")
-
-# %% [markdown]
-# Convenient function to calculate spectral Condition Number using `scipy`:
-
-# %%
-# def calculate_condition_number(
-#     A: petsc4py.PETSc.Mat,
-#     num_of_factors: int,
-#     use_sparse: bool = False,
-#     zero_tol: float = 1e-5,
-# ) -> float | np.float64:
-#     size = A.getSize()
-#     Mnp = csr_matrix(A.getValuesCSR()[::-1], shape=size)
-#     Mnp.eliminate_zeros()
-
-#     if use_sparse:
-#         singular_values = svds(
-#             A=Mnp,
-#             k=num_of_factors,
-#             which="LM",
-#             maxiter=5000,
-#             return_singular_vectors=False,
-#             solver="lobpcg",
-#         )
-#     else:
-#         M = Mnp.toarray()
-#         singular_values = svd(M, compute_uv=False, check_finite=False)
-
-#     singular_values = singular_values[singular_values > zero_tol]
-
-#     condition_number = singular_values.max() / singular_values.min()
-
-#     return condition_number
-
-# %% [markdown]
-# Condition Number for the monolithic (all scales) matrix system:
-
-# %%
-# monolithic_system_condition_number = calculate_condition_number(
-#     A=petsc_mat, num_of_factors=num_of_factors
-# )
-
-# print(f"Monolithic system Condition Number: {monolithic_system_condition_number}")
-
 # %% [markdown]
 # ##### Scale-splitting
-
-# %%
-# # Approximation degree
-# degree = 1
-
-# # Function space declaration
-# pressure_family = "CG"
-# velocity_family = "CG"
-# U = fd.VectorFunctionSpace(mesh, velocity_family, degree)
-# V = fd.FunctionSpace(mesh, pressure_family, degree)
-
-# # Trial and test functions
-# p1 = fd.TrialFunction(V)
-# p2 = fd.TrialFunction(V)
-# q1 = fd.TestFunction(V)
-# q2 = fd.TestFunction(V)
-
-# # Forcing function
-# f = fd.Constant(0.0)
-
-# # Dirichlet BCs
-# bc_macro = fd.DirichletBC(V, p1_exact, "on_boundary")
-# bc_micro = fd.DirichletBC(V, p2_exact, "on_boundary")
-
-# # Staggered pressures
-# p1_old = fd.interpolate(fd.Constant(0), V)
-# p2_old = fd.interpolate(fd.Constant(0), V)
-
-# # Variational form
-# ## Mass transfer term
-# xi_macro = -beta / mu * (p1 - p2_old)
-# xi_micro = -beta / mu * (p1_old - p2)
-
-# ## Macro terms
-# a_1 = (k1 / mu) * inner(grad(p1), grad(q1)) * dx - xi_macro * q1 * dx
-# L_1 = f * q1 * dx
-# F_macro = a_1 - L_1
-# a_macro = fd.lhs(F_macro)
-# L_macro = fd.rhs(F_macro)
-
-# ## Micro terms
-# a_2 = (k2 / mu) * inner(grad(p2), grad(q2)) * dx + xi_micro * q2 * dx
-# L_2 = f * q2 * dx
-# F_micro = a_2 - L_2
-# a_micro = fd.lhs(F_micro)
-# L_micro = fd.rhs(F_micro)
 
 # %%
 # # Macro
