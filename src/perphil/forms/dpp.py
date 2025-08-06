@@ -11,17 +11,17 @@ def _calculate_mass_transfer_term(
     mu: fd.Constant,
 ) -> fd.Function:
     """
-    TODO.
+    Calculate the mass transfer term (xi) between macro and micro pressures for the DPP model.
 
-    :param p_macro: _description_
+    :param p_macro: Macroscale pressure field.
     :type p_macro: fd.Function
-    :param p_micro: _description_
+    :param p_micro: Microscale pressure field.
     :type p_micro: fd.Function
-    :param beta: _description_
+    :param beta: Mass transfer coefficient.
     :type beta: fd.Constant
-    :param mu: _description_
+    :param mu: Fluid viscosity.
     :type mu: fd.Constant
-    :return: _description_
+    :return: Mass transfer term as a Firedrake Function.
     :rtype: fd.Function
     """
     xi = -beta / mu * (p_macro - p_micro)
@@ -36,19 +36,19 @@ def _macro_scale_form(
     beta: fd.Constant,
 ) -> Tuple[fd.Form, fd.Form]:
     """
-    TODO.
+    Assemble the bilinear and linear forms for the macroscale pressure equation in the DPP model.
 
-    :param trial_and_test_functions_macro: _description_
+    :param trial_and_test_functions_macro: Tuple containing the trial and test functions for the macroscale pressure.
     :type trial_and_test_functions_macro: Tuple[fd.Function, fd.Function]
-    :param pressure_micro: _description_
+    :param pressure_micro: Microscale pressure field used in the mass transfer term.
     :type pressure_micro: fd.Function
-    :param k1: _description_
+    :param k1: Permeability coefficient for the macroscale, representing the ability of the macroscale medium to transmit fluid.
     :type k1: fd.Constant
-    :param mu: _description_
+    :param mu: Fluid viscosity, representing the resistance of the fluid to flow.
     :type mu: fd.Constant
-    :param beta: _description_
+    :param beta: Mass transfer coefficient representing the rate of fluid exchange between macro and micro scales.
     :type beta: fd.Constant
-    :return: _description_
+    :return: A tuple containing the bilinear form (a_macro) and the linear form (L_macro) for the macroscale pressure equation.
     :rtype: Tuple[fd.Form, fd.Form]
     """
     p1, q1 = trial_and_test_functions_macro
@@ -68,19 +68,19 @@ def _micro_scale_form(
     beta: fd.Constant,
 ) -> Tuple[fd.Form, fd.Form]:
     """
-    TODO.
+    Assemble the bilinear and linear forms for the microscale pressure equation in the DPP model.
 
-    :param trial_and_test_functions_micro: _description_
+    :param trial_and_test_functions_micro: Tuple containing the trial and test functions for the microscale pressure.
     :type trial_and_test_functions_micro: Tuple[fd.Function, fd.Function]
-    :param pressure_macro: _description_
+    :param pressure_macro: Macroscale pressure field used in the mass transfer term.
     :type pressure_macro: fd.Function
-    :param k2: _description_
+    :param k2: Permeability coefficient for the microscale, representing the ability of the microscale medium to transmit fluid.
     :type k2: fd.Constant
-    :param mu: _description_
+    :param mu: Fluid viscosity, representing the resistance of the fluid to flow.
     :type mu: fd.Constant
-    :param beta: _description_
+    :param beta: Mass transfer coefficient representing the rate of fluid exchange between macro and micro scales.
     :type beta: fd.Constant
-    :return: _description_
+    :return: A tuple containing the bilinear form (a_micro) and the linear form (L_micro) for the microscale pressure equation.
     :rtype: Tuple[fd.Form, fd.Form]
     """
     p1 = pressure_macro

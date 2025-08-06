@@ -10,7 +10,31 @@ from scipy.linalg import svd
 @attr.define(frozen=True)
 class MatrixData:
     """
-    TODO.
+    A class to hold data related to a matrix, including its
+    assembled_form, PETSc matrix handle, symmetry status,
+    sparse CSR representation, number of non-zero entries,
+    number of degrees of freedom (DoFs), and symmetry tolerance.
+
+    :param assembled_matrix: The assembled matrix in Firedrake format.
+    :type assembled_matrix: fd.Matrix
+
+    :param petsc_matrix: The PETSc matrix handle.
+    :type petsc_matrix: PETSc.Mat
+
+    :param is_symmetric: Boolean indicating if the matrix is symmetric.
+    :type is_symmetric: bool
+
+    :param sparse_csr_data: Sparse CSR representation of the matrix.
+    :type sparse_csr_data: csr_matrix
+
+    :param number_of_nonzero_entries: Number of non-zero entries in the sparse matrix.
+    :type number_of_nonzero_entries: int
+
+    :param number_of_dofs: Number of degrees of freedom (DoFs) in the matrix.
+    :type number_of_dofs: int
+
+    :param symmetry_tolerance: Tolerance for symmetry checks.
+    :type symmetry_tolerance: float
     """
 
     assembled_matrix: fd.Matrix
@@ -24,13 +48,13 @@ class MatrixData:
 
 def assemble_bilinear_form(form: fd.Form, boundary_conditions: list[fd.DirichletBC]) -> fd.Matrix:
     """
-    TODO.
+    Assembles a bilinear form into a Firedrake matrix, applying the specified boundary conditions.
 
-    :param form: _description_
+    :param form: The bilinear form to assemble.
     :type form: fd.Form
-    :param boundary_conditions: _description_
+    :param boundary_conditions: List of Dirichlet boundary conditions to apply during assembly.
     :type boundary_conditions: list[fd.DirichletBC]
-    :return: _description_
+    :return: The assembled Firedrake matrix.
     :rtype: fd.Matrix
     """
     assembled_matrix = fd.assemble(form, bcs=boundary_conditions, mat_type="aij")
@@ -41,15 +65,15 @@ def get_matrix_data_from_form(
     form: fd.Form, boundary_conditions: list[fd.DirichletBC], symmetry_tolerance: float = 1e-8
 ) -> MatrixData:
     """
-    TODO.
+    Assembles a bilinear form and extracts matrix data, including symmetry and sparsity information.
 
-    :param form: _description_
+    :param form: The bilinear form to assemble.
     :type form: fd.Form
-    :param boundary_conditions: _description_
+    :param boundary_conditions: List of Dirichlet boundary conditions to apply during assembly.
     :type boundary_conditions: list[fd.DirichletBC]
-    :param symmetry_tolerance: _description_, defaults to 1e-8
-    :type symmetry_tolerance: _type_, optional
-    :return: _description_
+    :param symmetry_tolerance: Tolerance used to check matrix symmetry, defaults to 1e-8.
+    :type symmetry_tolerance: float, optional
+    :return: MatrixData object containing the assembled matrix, PETSc matrix handle, symmetry status, sparse CSR data, number of non-zero entries, number of DoFs, and symmetry tolerance.
     :rtype: MatrixData
     """
     assembled_matrix = assemble_bilinear_form(form, boundary_conditions)
@@ -83,16 +107,20 @@ def calculate_condition_number(
     zero_tol: float = 1e-5,
 ) -> float | np.float64:
     """
-    TODO.
+    Computes the condition number of a matrix using its singular values.
 
-    :param scipy_csr_sparse_matrix: _description_
-    :param num_of_factors: _description_
+    Depending on the 'use_sparse' flag, this function either computes the singular values using a sparse or dense method.
+    The condition number is defined as the ratio of the largest to the smallest singular value above a given zero tolerance.
+
+    :param scipy_csr_sparse_matrix: The matrix in SciPy CSR sparse format for which to compute the condition number.
+    :type scipy_csr_sparse_matrix: csr_matrix
+    :param num_of_factors: Number of singular values to compute (used only if use_sparse is True).
     :type num_of_factors: int
-    :param use_sparse: _description_, defaults to False
+    :param use_sparse: Whether to use sparse SVD computation (svds) or dense SVD (svd), defaults to False.
     :type use_sparse: bool, optional
-    :param zero_tol: _description_, defaults to 1e-5
+    :param zero_tol: Tolerance below which singular values are ignored, defaults to 1e-5.
     :type zero_tol: float, optional
-    :return: _description_
+    :return: The computed condition number of the matrix.
     :rtype: float | np.float64
     """
     if use_sparse:
@@ -110,4 +138,4 @@ def calculate_condition_number(
 
     singular_values = singular_values[singular_values > zero_tol]
     condition_number = singular_values.max() / singular_values.min()
-    return condition_number
+    return float(condition_number)

@@ -430,7 +430,7 @@ def dev_install(ctx):
 def dev_clean(ctx, dry=False):
     """
     Remove perphil build/config dirs:
-      - mypackage.egg-info
+      - perphil.egg-info
       - dist
       - build
       - *_cache

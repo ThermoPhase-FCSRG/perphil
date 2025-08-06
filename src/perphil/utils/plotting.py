@@ -52,15 +52,15 @@ def plot_2d_mesh(
     mesh: fd.Mesh, title: str = "Mesh", boundary_color: str = "black", edge_color: str = "black"
 ) -> None:
     """
-    TODO.
+    Convenient function to plot a 2D mesh using Firedrake's triplot.
 
-    :param mesh: _description_
+    :param mesh: 2D mesh to plot.
     :type mesh: fd.Mesh
-    :param title: _description_, defaults to "Mesh"
+    :param title: Title of the plot. Defaults to "Mesh".
     :type title: str, optional
-    :param boundary_color: _description_, defaults to "black"
+    :param boundary_color: Color of the boundary edges. Defaults to "black".
     :type boundary_color: str, optional
-    :param edge_color: _description_, defaults to "black"
+    :param edge_color: Color of the interior edges. Defaults to "black".
     :type edge_color: str, optional
     """
     _, axes = plt.subplots()
