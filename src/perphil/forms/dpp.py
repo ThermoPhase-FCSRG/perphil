@@ -143,12 +143,13 @@ def dpp_delayed_form(
     Build the bilinear and linear forms for the double-porosity/permeability system with delayed
     pressure fields.
 
-    This function is to be used only with the Picard approach.
+    This function is useful to retrieve the forms separately for the macro and micro scales,
+    for instance when implementing a Picard (fixed-point) iteration scheme.
 
     :param macro_function_space:
         A FunctionSpace for macro pressures.
 
-    :param macro_function_space:
+    :param micro_function_space:
         A FunctionSpace for micro pressures.
 
     :param model_params:
