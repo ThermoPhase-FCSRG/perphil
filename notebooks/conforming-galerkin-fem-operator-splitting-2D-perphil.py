@@ -11,7 +11,7 @@ import firedrake as fd
 
 
 from perphil.forms.spaces import create_function_spaces
-from perphil.forms.dpp import dpp_form
+from perphil.forms.dpp import dpp_form, dpp_delayed_form
 from perphil.mesh.builtin import create_mesh
 from perphil.models.dpp.parameters import DPPParameters
 from perphil.solvers.conditioning import (
@@ -296,49 +296,33 @@ print(f"Monolithic system Condition Number: {monolithic_system_condition_number}
 # ##### Scale-splitting
 
 # %%
-# # Macro
-# A_macro = fd.assemble(a_macro, bcs=bc_macro, mat_type="aij")
-# petsc_mat_macro = A_macro.M.handle
-# is_symmetric_macro = petsc_mat_macro.isSymmetric(tol=1e-8)
-# size_macro = petsc_mat_macro.getSize()
-# Mnp_macro = csr_matrix(petsc_mat_macro.getValuesCSR()[::-1], shape=size_macro)
+# Prepare initial zero estimates for pressures
+p1_zero = fd.Function(V)
+p1_zero.interpolate(fd.Constant(0.0))
+p2_zero = fd.Function(V)
+p2_zero.interpolate(fd.Constant(0.0))
 
-# # Micro
-# A_micro = fd.assemble(a_micro, bcs=bc_micro, mat_type="aij")
-# petsc_mat_micro = A_micro.M.handle
-# is_symmetric_micro = petsc_mat_micro.isSymmetric(tol=1e-8)
-# size_micro = petsc_mat_micro.getSize()
-# Mnp_micro = csr_matrix(petsc_mat_micro.getValuesCSR()[::-1], shape=size_micro)
+# Build bilinear forms for scale-splitting
+forms_macro, forms_micro = dpp_delayed_form(V, V, dpp_params, p1_zero, p2_zero)
+a_macro_form, _ = forms_macro
+a_micro_form, _ = forms_micro
 
-# %%
-# Mnp_macro.eliminate_zeros()
-# nnz = Mnp_macro.nnz
-# number_of_dofs = V.dim()
-# num_of_factors = int(number_of_dofs) - 1
+# Create BCs for macro and micro in individual spaces
+bc_macro_V = fd.DirichletBC(V, p1_exact, "on_boundary")
+bc_micro_V = fd.DirichletBC(V, p2_exact, "on_boundary")
 
-# print(f"Number of Degrees of Freedom (Macro): {number_of_dofs}")
-# print(f"Number of non-zero entries: {nnz}")
-# print(f"Is operator symmetric? {is_symmetric}")
-# print(f"Number of factors to compute in SVD: {num_of_factors}")
+# Conditioning analysis for the macro system
+matrix_data_macro = get_matrix_data_from_form(a_macro_form, [bc_macro_V])
+macro_condition_number = calculate_condition_number(
+    matrix_data_macro.sparse_csr_data,
+    num_of_factors=matrix_data_macro.number_of_dofs - 1,
+)
+print(f"Macro system Condition Number: {macro_condition_number}")
 
-# %%
-# Mnp_micro.eliminate_zeros()
-# nnz = Mnp_micro.nnz
-# number_of_dofs = V.dim()
-# num_of_factors = int(number_of_dofs) - 1
-
-# print(f"Number of Degrees of Freedom (Micro): {number_of_dofs}")
-# print(f"Number of non-zero entries: {nnz}")
-# print(f"Is operator symmetric? {is_symmetric}")
-# print(f"Number of factors to compute in SVD: {num_of_factors}")
-
-# %%
-# macro_system_condition_number = calculate_condition_number(
-#     A=petsc_mat_macro, num_of_factors=num_of_factors
-# )
-# micro_system_condition_number = calculate_condition_number(
-#     A=petsc_mat_micro, num_of_factors=num_of_factors
-# )
-
-# print(f"Macro system Condition Number: {macro_system_condition_number}")
-# print(f"Micro system Condition Number: {micro_system_condition_number}")
+# Conditioning analysis for the micro system
+matrix_data_micro = get_matrix_data_from_form(a_micro_form, [bc_micro_V])
+micro_condition_number = calculate_condition_number(
+    matrix_data_micro.sparse_csr_data,
+    num_of_factors=matrix_data_micro.number_of_dofs - 1,
+)
+print(f"Micro system Condition Number: {micro_condition_number}")
