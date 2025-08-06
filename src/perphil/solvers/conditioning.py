@@ -38,7 +38,7 @@ def assemble_bilinear_form(form: fd.Form, boundary_conditions: list[fd.Dirichlet
 
 
 def get_matrix_data_from_form(
-    form: fd.Form, boundary_conditions: list[fd.DirichletBC], symmetry_tolerance=1e-8
+    form: fd.Form, boundary_conditions: list[fd.DirichletBC], symmetry_tolerance: float = 1e-8
 ) -> MatrixData:
     """
     TODO.
