@@ -9,7 +9,6 @@ os.environ["OMP_NUM_THREADS"] = "1"
 
 import firedrake as fd
 
-
 from perphil.forms.spaces import create_function_spaces
 from perphil.forms.dpp import dpp_form, dpp_delayed_form
 from perphil.mesh.builtin import create_mesh
