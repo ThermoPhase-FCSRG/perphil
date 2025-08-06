@@ -18,6 +18,9 @@ GMRES_PARAMS: dict = {
 # GMRES + Jacobi parameters for scale-splitting comparison
 GMRES_JACOBI_PARAMS: dict = {"pc_type": "jacobi", **GMRES_PARAMS}
 
+# GMRES + ILU additional parameters for scale-splitting comparison
+GMRES_ILU_PARAMS: dict = {"pc_type": "ilu", **GMRES_PARAMS}
+
 # Field-split preconditioner (multiplicative) with LU in each block
 FIELDSPLIT_LU_PARAMS: dict = {
     "pc_type": "fieldsplit",
