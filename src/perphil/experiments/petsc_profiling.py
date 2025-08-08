@@ -8,10 +8,12 @@ Backends (in order when backend="auto"):
 4) Stage API (per-stage before/after snapshot).
 5) Wallclock fallback (total only under KSPSolve).
 
-Force nonzero RHS by default so KSP does work.
-Records FLOPS per logical event (and mflops rates), plus flops_total.
-Records memory metrics: RSS peak/delta per rank, Mat/PMat/Factor nz and memory (MB).
-Records universal time_total (avg wall per run) and time_total_repeats (wall across repeats).
+Records:
+- Event times (and FLOPS) per logical event, plus flops_total.
+- Memory metrics: RSS peak/delta per rank, Mat/PMat/Factor nz and memory (MB).
+- Universal time metrics: time_total (avg wall per run) and time_total_repeats (sum across repeats).
+
+Optionally applies manufactured pressures as Dirichlet BCs (use_manufactured=True).
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ from perphil.experiments.iterative_bench import (
     default_model_params,
     solve_on_mesh,
 )
+from perphil.utils.manufactured_solutions import exact_expressions
 
 # Prefer explicit execution for timing stability
 fd.parameters["pyop2_options"]["lazy_evaluation"] = False
@@ -515,10 +518,11 @@ def run_perf_once(
     approach: Approach,
     eager: bool = True,
     logical_events: Optional[List[str]] = None,
-    force_nonzero_rhs: bool = True,
+    force_nonzero_rhs: bool = False,
     bc_values: Optional[List[float]] = None,
     repeats: int = 5,
     backend: str = "auto",  # "auto" | "json" | "ascii" | "events" | "stage" | "wall"
+    use_manufactured: bool = True,  # apply manufactured pressures as Dirichlet BCs
 ) -> PerfResult:
     """
     Run one profiled solve (optionally repeated) and return PETSc event times and flops.
@@ -529,8 +533,18 @@ def run_perf_once(
     _, _, W = build_spaces(mesh)
     comm = mesh.comm
 
-    # BCs (force nonzero RHS by default)
-    if force_nonzero_rhs:
+    # Model parameters
+    params = default_model_params()
+
+    # BCs
+    if use_manufactured:
+        # Manufactured pressures as boundary conditions
+        _u1e, p1e, _u2e, p2e = exact_expressions(mesh, params)
+        bcs = [
+            fd.DirichletBC(W.sub(0), p1e, "on_boundary"),
+            fd.DirichletBC(W.sub(1), p2e, "on_boundary"),
+        ]
+    elif force_nonzero_rhs:
         v = bc_values or [1.0, 0.0]
         bcs = [
             fd.DirichletBC(W.sub(0), fd.Constant(v[0]), "on_boundary"),
@@ -539,7 +553,6 @@ def run_perf_once(
     else:
         bcs = default_bcs(W)
 
-    params = default_model_params()
     logical_events = list(dict.fromkeys((logical_events or []) + DEFAULT_LOGICAL_EVENTS))
 
     # Warmup
@@ -658,6 +671,7 @@ def run_perf_sweep(
     bc_values: Optional[List[float]] = None,
     repeats: int = 5,
     backend: str = "auto",
+    use_manufactured: bool = True,
 ) -> pd.DataFrame:
     rows: List[Dict[str, Any]] = []
     for nx in mesh_sizes:
@@ -673,6 +687,7 @@ def run_perf_sweep(
                 bc_values=bc_values,
                 repeats=repeats,
                 backend=backend,
+                use_manufactured=use_manufactured,
             )
             rows.append(res.to_dict())
             PETSc.Sys.Print(
