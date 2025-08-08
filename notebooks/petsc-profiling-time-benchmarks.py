@@ -29,10 +29,11 @@ RESULTS_PATH = Path("results-conforming-2d/petsc_profiling")
 # ## Parameters
 
 # %%
-# mesh_sizes: List[int] = [4, 8, 16, 32, 64]  # this is the one for final results
+# mesh_sizes: List[int] = [4, 8, 16, 32, 64, 128]  # this is the one for final results
+mesh_sizes: List[int] = [4, 8, 16, 32, 64]  # this is the one for final results
 # mesh_sizes: List[int] = [4, 8, 16, 32]
 # mesh_sizes: List[int] = [5, 10, 15, 20]
-mesh_sizes: List[int] = [5, 10, 15, 20]
+# mesh_sizes: List[int] = [5, 10, 15, 20]
 approaches: List[Approach] = [
     Approach.PLAIN_GMRES,
     Approach.GMRES_ILU,
@@ -47,7 +48,7 @@ extra_events: List[str] = []
 # ## Run and collect
 
 # %%
-df = run_perf_sweep(mesh_sizes, approaches, repeats=3, backend="events")
+df = run_perf_sweep(mesh_sizes, approaches, repeats=5, backend="events")
 df.sort_values(["nx", "approach"])
 
 # %% [markdown]
