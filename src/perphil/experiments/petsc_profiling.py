@@ -10,6 +10,8 @@ Backends (in order when backend="auto"):
 
 Force nonzero RHS by default so KSP does work.
 Records FLOPS per logical event (and mflops rates), plus flops_total.
+Records memory metrics: RSS peak/delta per rank, Mat/PMat/Factor nz and memory (MB).
+Records universal time_total (avg wall per run) and time_total_repeats (wall across repeats).
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ import os
 import re
 import tempfile
 import time
+import resource  # RSS metrics
 
 import numpy as np
 import pandas as pd
@@ -361,6 +364,72 @@ def _profile_with_stage_api(
     return times, flops, wall
 
 
+def _get_rss_kb() -> int:
+    """
+    Peak resident set size in KB (normalized). Linux ru_maxrss is KB; macOS is bytes.
+    """
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # Heuristic: normalize to KB if value looks like bytes (macOS)
+    return int(rss // 1024) if rss > 10_000_000 else int(rss)
+
+
+def _collect_matrix_memory(solver_obj: Any) -> Dict[str, float]:
+    """
+    Collect matrix memory stats for A/P and factor (if available).
+    Returns keys: mat_nz_used, mat_nz_allocated, mat_memory_mb, pmat_*, factor_*.
+    """
+    out: Dict[str, float] = {}
+
+    def add_mat(prefix: str, M: Optional[PETSc.Mat]) -> None:
+        if M is None:
+            return
+        try:
+            info = M.getInfo(PETSc.Mat.InfoType.GLOBAL_SUM)
+            nz_used = float(info.get("nz_used", 0.0))
+            nz_alloc = float(info.get("nz_allocated", 0.0))
+            mem_b = float(info.get("memory", 0.0))
+            out[f"{prefix}_nz_used"] = nz_used
+            out[f"{prefix}_nz_allocated"] = nz_alloc
+            out[f"{prefix}_memory_mb"] = mem_b / (1024.0 * 1024.0)
+        except Exception:
+            pass
+
+    try:
+        # Get KSP handle
+        ksp = None
+        snes = getattr(solver_obj, "snes", None)
+        if snes is not None and hasattr(snes, "ksp"):
+            ksp = snes.ksp
+        elif hasattr(solver_obj, "ksp"):
+            ksp = solver_obj.ksp
+        if ksp is None:
+            return out
+
+        # Operators A and P
+        try:
+            A, P = ksp.getOperators()
+        except Exception:
+            A = P = None
+        add_mat("mat", A)
+        add_mat("pmat", P)
+
+        # Factor matrix for LU/ILU
+        try:
+            pc = ksp.getPC()
+            pct = (pc.getType() or "").lower()
+            if "lu" in pct or "ilu" in pct:
+                try:
+                    F = pc.getFactorMatrix()
+                    add_mat("factor", F)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return out
+
+
 @dataclass
 class PerfResult:
     approach: str
@@ -373,6 +442,10 @@ class PerfResult:
     times: Dict[str, float]
     flops: Dict[str, float]
     metadata: Dict[str, Any]
+    memory: Optional[Dict[str, float]] = None
+    # Universal wall-clock metrics
+    time_total: float = 0.0  # average wall time per run (seconds)
+    time_total_repeats: float = 0.0  # total wall time across repeats (seconds)
 
     def to_dict(self) -> Dict[str, Any]:
         base = asdict(self)
@@ -385,8 +458,17 @@ class PerfResult:
             t = self.times.get(k, 0.0)
             base[f"mflops_{k}"] = (v / t / 1e6) if t > 0.0 else 0.0
         base["flops_total"] = float(sum(self.flops.values()))
+        # Flatten memory
+        if self.memory:
+            for k, v in self.memory.items():
+                base[f"mem_{k}"] = v
+        # Universal time
+        base["time_total"] = float(self.time_total)
+        base["time_total_repeats"] = float(self.time_total_repeats)
+        # Drop nested dicts
         base.pop("times", None)
         base.pop("flops", None)
+        base.pop("memory", None)
         return base
 
 
@@ -469,9 +551,13 @@ def run_perf_once(
     def run_once():
         solve_on_mesh(W, approach, params=params, bcs=bcs)
 
+    # Record RSS before profiling this case (per-rank), to compute delta
+    rss_before_kb = _get_rss_kb()
+
     # Select backend(s)
     backends = [backend] if backend != "auto" else ["json", "ascii", "events", "stage", "wall"]
 
+    wall_total = 0.0
     for be in backends:
         try:
             if be == "json":
@@ -501,6 +587,7 @@ def run_perf_once(
             # Accept if any event is nonzero or backend is "wall"/"events"
             if (sum(times.values()) > 0.0) or be in ("wall", "events"):
                 backend_used = be
+                wall_total = wall
                 break
         except Exception:
             continue
@@ -514,8 +601,9 @@ def run_perf_once(
         times["KSPSolve"] = wall
         flops = {e: 0.0 for e in logical_events}
         backend_used = "wall"
+        wall_total = wall
 
-    # Solve once to collect iteration/residual (cheap)
+    # Solve once to collect iteration/residual and build operators for memory stats
     sol = solve_on_mesh(W, approach, params=params, bcs=bcs)
 
     # Metadata and counters
@@ -525,6 +613,17 @@ def run_perf_once(
     ksp_iters = _extract_ksp_iters_if_possible(solver_handle)
     iterations = ksp_iters if ksp_iters is not None else getattr(sol, "iteration_number", None)
     residual = float(getattr(sol, "residual_error", np.nan))
+
+    # Memory metrics
+    rss_after_kb = _get_rss_kb()
+    rss_peak_kb = float(comm.allreduce(rss_after_kb, op=MPI.MAX))
+    rss_delta_kb = float(comm.allreduce(max(0, rss_after_kb - rss_before_kb), op=MPI.MAX))
+    mat_mem = _collect_matrix_memory(solver_handle)
+    memory: Dict[str, float] = {
+        "rss_peak_kb": rss_peak_kb,
+        "rss_delta_kb": rss_delta_kb,
+        **mat_mem,
+    }
 
     meta: Dict[str, Any] = {
         "petsc_version": PETSc.Sys.getVersion(),
@@ -544,6 +643,9 @@ def run_perf_once(
         times=times,
         flops=flops,
         metadata=meta,
+        memory=memory,
+        time_total=(wall_total / max(1, repeats)),
+        time_total_repeats=wall_total,
     )
 
 
@@ -575,6 +677,7 @@ def run_perf_sweep(
             rows.append(res.to_dict())
             PETSc.Sys.Print(
                 f"[perf] nx={nx} {ap.value}: iters={res.iterations}, "
+                f"time_total={res.time_total:.3e}s, "
                 f"KSPSolve={res.times.get('KSPSolve', 0):.3e}s, "
                 f"PCApply={res.times.get('PCApply', 0):.3e}s, "
                 f"flops_total={sum(res.flops.values()):.3e} "
