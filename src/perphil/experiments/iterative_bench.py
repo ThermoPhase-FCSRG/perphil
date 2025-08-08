@@ -126,9 +126,9 @@ def default_model_params() -> DPPParameters:
     Create default DPP model parameters with unit values.
 
     :return:
-        DPPParameters with k1=k2=beta=mu=1.0.
+        DPPParameters with k1=beta=mu=1.0, k2=k1/1e2.
     """
-    return DPPParameters(k1=1.0, k2=1.0, beta=1.0, mu=1.0)
+    return DPPParameters(k1=1.0, k2=1.0 / 1e2, beta=1.0, mu=1.0)
 
 
 def make_fieldsplit_params_with(block_pc: str = "lu") -> Dict:
