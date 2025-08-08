@@ -23,7 +23,7 @@ Purpose: help an AI be productive immediately in this Firedrake-based FEM codeba
   2) `inv install_deps` → installs `.[dev]` from `pyproject.toml` (ruff, mypy, invoke, jupytext, etc.).
   3) `inv download_firedrake_configure` → fetches `./firedrake-configure` matching latest Firedrake release.
   4) `inv install_system_packages` → apt/brew install prerequisites (adds OpenMPI on Linux).
-  5) `inv install_petsc` → clones/Builds PETSc with flags from firedrake; sets PETSC_DIR/ARCH for this session.
+  5) `inv install_petsc` → clones/builds PETSc with flags from firedrake; sets PETSC_DIR/ARCH for this session.
   6) `inv install_firedrake` → pip-installs `firedrake[check]` against that PETSc (uses `constraints.txt` to pin Cython<3.1).
 - Tip: steps 5→6 are order-sensitive; `install_firedrake` expects PETSC_DIR/ARCH from the previous step.
 
