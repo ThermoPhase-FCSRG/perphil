@@ -10,7 +10,7 @@ LINEAR_SOLVER_PARAMS: dict = {
 GMRES_PARAMS: dict = {
     "mat_type": "aij",
     "ksp_type": "gmres",
-    "ksp_rtol": 1.0e-12,
+    "ksp_rtol": 1.0e-8,
     "ksp_atol": 1.0e-12,
     "ksp_max_it": 5000,
 }
