@@ -15,11 +15,14 @@ GMRES_PARAMS: dict = {
     "ksp_max_it": 5000,
 }
 
+# Plain GMRES without preconditioners
+PLAIN_GMRES_PARAMS: dict = {"pc_type": "none", **GMRES_PARAMS}
+
 # GMRES + Jacobi parameters for scale-splitting comparison
 GMRES_JACOBI_PARAMS: dict = {"pc_type": "jacobi", **GMRES_PARAMS}
 
 # GMRES + ILU additional parameters for scale-splitting comparison
-GMRES_ILU_PARAMS: dict = {"pc_type": "ilu", **GMRES_PARAMS}
+GMRES_ILU_PARAMS: dict = {"pc_type": "ilu", "pc_factor_levels": 1, **GMRES_PARAMS}
 
 # Field-split preconditioner (multiplicative) with LU in each block
 FIELDSPLIT_LU_PARAMS: dict = {
@@ -29,6 +32,26 @@ FIELDSPLIT_LU_PARAMS: dict = {
     "pc_fieldsplit_1_fields": "1",
     "fieldsplit_0": LINEAR_SOLVER_PARAMS,
     "fieldsplit_1": LINEAR_SOLVER_PARAMS,
+}
+
+# Field-split preconditioner (multiplicative) with GMRES in each block
+FIELDSPLIT_GMRES_PARAMS: dict = {
+    "pc_type": "fieldsplit",
+    "pc_fieldsplit_type": "multiplicative",
+    "pc_fieldsplit_0_fields": "0",
+    "pc_fieldsplit_1_fields": "1",
+    "fieldsplit_0": PLAIN_GMRES_PARAMS,
+    "fieldsplit_1": PLAIN_GMRES_PARAMS,
+}
+
+# Field-split preconditioner (multiplicative) with GMRES + ILU in each block
+FIELDSPLIT_GMRES_ILU_PARAMS: dict = {
+    "pc_type": "fieldsplit",
+    "pc_fieldsplit_type": "multiplicative",
+    "pc_fieldsplit_0_fields": "0",
+    "pc_fieldsplit_1_fields": "1",
+    "fieldsplit_0": GMRES_ILU_PARAMS,
+    "fieldsplit_1": GMRES_ILU_PARAMS,
 }
 
 # Picard (nonlinear Richardson) solver parameters with field-split
@@ -42,13 +65,31 @@ RICHARDSON_SOLVER_PARAMS: dict = {
     **FIELDSPLIT_LU_PARAMS,
 }
 
-# Picard (with nonlinear Gauss-Siedel) solver parameters with field-split
-NGS_SOLVER_PARAMS = {
+# Picard (with nonlinear Gauss-Siedel and LU) solver parameters with field-split
+PICARD_LU_SOLVER_PARAMS = {
     "snes_type": "ngs",
     "snes_max_it": 10000,
-    "snes_rtol": 1e-5,
+    "snes_rtol": 1e-8,
     "snes_atol": 1e-12,
     **FIELDSPLIT_LU_PARAMS,
+}
+
+# Picard (with GMRES) solver parameters with field-split
+PICARD_GMRES_SOLVER_PARAMS = {
+    "snes_type": "ngs",
+    "snes_max_it": 10000,
+    "snes_rtol": 1e-8,
+    "snes_atol": 1e-12,
+    **FIELDSPLIT_GMRES_PARAMS,
+}
+
+# Picard (with GMRES + ILU) solver parameters with field-split
+PICARD_GMRES_ILU_SOLVER_PARAMS = {
+    "snes_type": "ngs",
+    "snes_max_it": 10000,
+    "snes_rtol": 1e-8,
+    "snes_atol": 1e-12,
+    **FIELDSPLIT_GMRES_ILU_PARAMS,
 }
 
 # SNES with KSP-only (for preconditioner analysis)
