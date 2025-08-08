@@ -1,3 +1,5 @@
+_MAX_ITERATION_NUMBER = 50000
+
 # Linear monolithic solver parameters (direct solver via MUMPS)
 LINEAR_SOLVER_PARAMS: dict = {
     "mat_type": "aij",
@@ -12,7 +14,7 @@ GMRES_PARAMS: dict = {
     "ksp_type": "gmres",
     "ksp_rtol": 1.0e-8,
     "ksp_atol": 1.0e-12,
-    "ksp_max_it": 5000,
+    "ksp_max_it": _MAX_ITERATION_NUMBER,
 }
 
 # Plain GMRES without preconditioners
@@ -57,7 +59,7 @@ FIELDSPLIT_GMRES_ILU_PARAMS: dict = {
 # Picard (nonlinear Richardson) solver parameters with field-split
 RICHARDSON_SOLVER_PARAMS: dict = {
     "snes_type": "nrichardson",
-    "snes_max_it": 50000,
+    "snes_max_it": _MAX_ITERATION_NUMBER,
     "snes_linesearch_type": "basic",
     "snes_linesearch_damping": 0.5,
     "snes_rtol": 1e-5,
@@ -68,7 +70,7 @@ RICHARDSON_SOLVER_PARAMS: dict = {
 # Picard (with nonlinear Gauss-Siedel and LU) solver parameters with field-split
 PICARD_LU_SOLVER_PARAMS = {
     "snes_type": "ngs",
-    "snes_max_it": 10000,
+    "snes_max_it": _MAX_ITERATION_NUMBER,
     "snes_rtol": 1e-8,
     "snes_atol": 1e-12,
     **FIELDSPLIT_LU_PARAMS,
@@ -77,7 +79,7 @@ PICARD_LU_SOLVER_PARAMS = {
 # Picard (with GMRES) solver parameters with field-split
 PICARD_GMRES_SOLVER_PARAMS = {
     "snes_type": "ngs",
-    "snes_max_it": 10000,
+    "snes_max_it": _MAX_ITERATION_NUMBER,
     "snes_rtol": 1e-8,
     "snes_atol": 1e-12,
     **FIELDSPLIT_GMRES_PARAMS,
@@ -86,7 +88,7 @@ PICARD_GMRES_SOLVER_PARAMS = {
 # Picard (with GMRES + ILU) solver parameters with field-split
 PICARD_GMRES_ILU_SOLVER_PARAMS = {
     "snes_type": "ngs",
-    "snes_max_it": 10000,
+    "snes_max_it": _MAX_ITERATION_NUMBER,
     "snes_rtol": 1e-8,
     "snes_atol": 1e-12,
     **FIELDSPLIT_GMRES_ILU_PARAMS,
