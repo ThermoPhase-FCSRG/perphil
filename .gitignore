@@ -198,3 +198,4 @@ firedrake-configure
 constraints.txt
 petsc-*/
 external/
+*.png
