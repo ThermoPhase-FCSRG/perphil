@@ -32,7 +32,7 @@ RESULTS_PATH = Path("results-conforming-2d/petsc_profiling")
 # mesh_sizes: List[int] = [4, 8, 16, 32, 64]  # this is the one for final results
 # mesh_sizes: List[int] = [4, 8, 16, 32]
 # mesh_sizes: List[int] = [5, 10, 15, 20]
-mesh_sizes: List[int] = [5, 10, 15]
+mesh_sizes: List[int] = [5, 10, 15, 20]
 approaches: List[Approach] = [
     Approach.PLAIN_GMRES,
     Approach.GMRES_ILU,
