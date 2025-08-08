@@ -166,20 +166,25 @@ def params_for(approach: Approach) -> Dict:
         If the approach is unknown.
     """
     if approach == Approach.PLAIN_GMRES:
-        return dict(solver_params.GMRES_PARAMS)
-    if approach == Approach.GMRES_ILU:
-        return dict(solver_params.GMRES_ILU_PARAMS)
-    if approach == Approach.SS_GMRES:
-        return make_fieldsplit_params_with("lu")
-    if approach == Approach.SS_GMRES_ILU:
-        return make_fieldsplit_params_with("ilu")
-    if approach == Approach.MONOLITHIC_MUMPS:
-        return dict(solver_params.LINEAR_SOLVER_PARAMS)
-    if approach == Approach.PICARD_MUMPS:
-        # For the nonlinear Picard split form, use preonly+MUMPS for the linear sub-problems
-        # KSP_PREONLY_PARAMS in repo is intended for SNES-based drivers.
-        return dict(solver_params.KSP_PREONLY_PARAMS)
-    raise ValueError(f"Unknown approach: {approach}")
+        return solver_params.GMRES_PARAMS.copy()
+    elif approach == Approach.GMRES_ILU:
+        return solver_params.GMRES_ILU_PARAMS.copy()
+    elif approach == Approach.SS_GMRES:
+        PARAMS = {**solver_params.GMRES_PARAMS.copy(), **solver_params.FIELDSPLIT_LU_PARAMS.copy()}
+        return PARAMS
+    elif approach == Approach.SS_GMRES_ILU:
+        PARAMS = {
+            **solver_params.GMRES_PARAMS.copy(),
+            **solver_params.FIELDSPLIT_GMRES_ILU_PARAMS.copy(),
+        }
+        return PARAMS
+    elif approach == Approach.MONOLITHIC_MUMPS:
+        return solver_params.LINEAR_SOLVER_PARAMS.copy()
+    elif approach == Approach.PICARD_MUMPS:
+        # Use the SNES-based NGS iterations for the Picard split form
+        return solver_params.PICARD_LU_SOLVER_PARAMS.copy()
+    else:
+        raise ValueError(f"Unknown approach: {approach}")
 
 
 def solve_on_mesh(
