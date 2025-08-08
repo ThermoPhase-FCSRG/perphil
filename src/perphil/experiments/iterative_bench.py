@@ -40,8 +40,8 @@ class Approach(str, Enum):
     - MONOLITHIC_MUMPS: Direct monolithic solve using MUMPS.
     """
 
-    PLAIN_GMRES = "Plain GMRES"
-    GMRES_ILU = "Plain GMRES + ILU PC"
+    PLAIN_GMRES = "GMRES"
+    GMRES_ILU = "GMRES + ILU PC"
     SS_GMRES = "Scale-Splitting GMRES"
     SS_GMRES_ILU = "Scale-Splitting GMRES + ILU PC"
     PICARD_MUMPS = "Scaling-Splitting Picard with MUMPS"
@@ -166,7 +166,8 @@ def params_for(approach: Approach) -> Dict:
         If the approach is unknown.
     """
     if approach == Approach.PLAIN_GMRES:
-        return solver_params.GMRES_PARAMS.copy()
+        # True plain GMRES baseline: explicitly disable preconditioning
+        return solver_params.PLAIN_GMRES_PARAMS.copy()
     elif approach == Approach.GMRES_ILU:
         return solver_params.GMRES_ILU_PARAMS.copy()
     elif approach == Approach.SS_GMRES:
