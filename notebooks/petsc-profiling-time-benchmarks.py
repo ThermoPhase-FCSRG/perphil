@@ -42,7 +42,7 @@ approaches: List[Approach] = [
     Approach.SS_GMRES,
     Approach.SS_GMRES_ILU,
     Approach.PICARD_MUMPS,
-    # Approach.MONOLITHIC_MUMPS,
+    Approach.MONOLITHIC_MUMPS,
 ]
 extra_events: List[str] = []
 
