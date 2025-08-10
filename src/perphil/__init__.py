@@ -1,7 +1,16 @@
-try:
-    import firedrake
-except ImportError:
-    raise ImportError(
-        "This package requires Firedrake."
-        "Please install Firedrake and then install `perphil` in the same env."
-    )
+"""perphil package init.
+
+Expose a feature flag indicating whether Firedrake is available. Avoid raising at
+import time so that submodules not requiring Firedrake (e.g., parameter dicts) can
+still be imported in lightweight environments and CI.
+"""
+
+HAS_FIREDRAKE = False
+try:  # pragma: no cover - trivial import guard
+    import firedrake as _fd  # noqa: F401
+
+    HAS_FIREDRAKE = True
+except Exception:  # pragma: no cover
+    HAS_FIREDRAKE = False
+
+__all__ = ["HAS_FIREDRAKE"]
