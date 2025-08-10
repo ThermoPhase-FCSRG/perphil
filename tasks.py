@@ -198,9 +198,28 @@ def install_petsc(c):
     petsc_repo = "https://gitlab.com/petsc/petsc.git"
     petsc_dir = f"petsc-{petsc_version}"
     abs_petsc = os.path.abspath(petsc_dir)
+    arch = "arch-firedrake-default"
     if not os.path.isdir(petsc_dir):
         print(f"Cloning PETSc {petsc_version} …")
         c.run(f"git clone --branch {petsc_version} {petsc_repo} {petsc_dir}", echo=True)
+
+    # Short-circuit: if cached PETSc build is present, skip configure/build
+    arch_lib_dir = os.path.join(abs_petsc, arch, "lib")
+    if os.path.isdir(arch_lib_dir):
+        try:
+            lib_files = [name for name in os.listdir(arch_lib_dir) if name.startswith("libpetsc")]
+        except FileNotFoundError:
+            lib_files = []
+        if lib_files:
+            _task_screen_log(
+                f"✔ Found cached PETSc build at '{arch_lib_dir}', skipping configure/build.",
+                color="green",
+            )
+            os.environ["PETSC_DIR"] = abs_petsc
+            os.environ["PETSC_ARCH"] = arch
+            print(f"→ Exported PETSC_DIR={abs_petsc}")
+            print(f"→ Exported PETSC_ARCH={arch}")
+            return
 
     print("Gathering PETSc configure flags …")
     cfg_flags = (
@@ -219,13 +238,15 @@ def install_petsc(c):
 
     print("Configuring PETSc …")
     with c.cd(petsc_dir):
-        c.run(
-            f"{prefix_down} python3 ../firedrake-configure --show-petsc-configure-options | xargs -L1 ./configure",
-            echo=True,
-            pty=True,
-        )
+        # Join configure flags into a single invocation and pass CC/CXX explicitly
+        cfg_joined = " ".join(shlex.quote(f) for f in cfg_flags)
+        cc = os.environ.get("CC", "").strip()
+        cxx = os.environ.get("CXX", "").strip()
+        cc_arg = f" CC={shlex.quote(cc)}" if cc else ""
+        cxx_arg = f" CXX={shlex.quote(cxx)}" if cxx else ""
+        cmd = f"{prefix_down} ./configure {cfg_joined}{cc_arg}{cxx_arg}"
+        c.run(cmd, echo=True, pty=True)
 
-        arch = "arch-firedrake-default"
         print("Building PETSc (this may take a long time) …")
         c.run(f"make PETSC_DIR={abs_petsc} PETSC_ARCH={arch} all", echo=True)
 
