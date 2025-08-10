@@ -18,6 +18,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python
+        id: setup-python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
@@ -30,18 +31,50 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: Install perphil-only dependencies
+      - name: Install task runner (Invoke) and utilities used by tasks
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[dev]'
-          pip install pytest-cov coverage
+          pip install invoke rich
 
-      - name: Install Firedrake and PETSc
+      - name: Determine Firedrake latest tag
+        id: firedrake
+        run: |
+          TAG=$(curl -s https://api.github.com/repos/firedrakeproject/firedrake/releases/latest | grep -E '"tag_name"' | cut -d '"' -f 4)
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download firedrake-configure (for PETSc version discovery)
+        run: |
+          inv download-firedrake-configure
+
+      - name: Determine PETSc version required by Firedrake
+        id: petsc
+        run: |
+          VER=$(python3 firedrake-configure --show-petsc-version)
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Cache PETSc build directory
+        id: cache-petsc
+        uses: actions/cache@v4
+        with:
+          path: |
+            petsc-${{ steps.petsc.outputs.version }}
+          key: ${{ runner.os }}-petsc-${{ steps.petsc.outputs.version }}
+
+      - name: Cache Python virtualenv (.venv)
+        id: cache-venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-${{ steps.firedrake.outputs.tag }}-${{ steps.petsc.outputs.version }}-${{ hashFiles('pyproject.toml', 'tasks.py') }}
+
+      - name: Install Firedrake and PETSc via Invoke tasks (uses .venv)
         run: |
           inv install-firedrake
 
       - name: Run tests with coverage
         run: |
+          source .venv/bin/activate
+          python -m pip install -e '.[dev]'
           pytest --cov=src/perphil --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage artifact
