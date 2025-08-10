@@ -31,7 +31,16 @@ RESULTS_PATH = Path("results-conforming-2d/petsc_profiling")
 # ## Parameters
 
 # %%
-mesh_sizes: List[int] = [4, 8, 16, 32, 64, 128]  # this is the one for final results
+# mesh_sizes: List[int] = [4, 8, 16, 32, 64, 128]  # this is the one for final results
+mesh_sizes: List[int] = [
+    4,
+    8,
+    16,
+    32,
+    64,
+    128,
+    256,
+]  # this is the one for final results
 # mesh_sizes: List[int] = [4, 8, 16, 32, 64]
 # mesh_sizes: List[int] = [4, 8, 16, 32]
 # mesh_sizes: List[int] = [5, 10, 15, 20]
@@ -41,7 +50,7 @@ approaches: List[Approach] = [
     Approach.GMRES_ILU,
     Approach.SS_GMRES,
     Approach.SS_GMRES_ILU,
-    Approach.PICARD_MUMPS,
+    # Approach.PICARD_MUMPS,
     Approach.MONOLITHIC_MUMPS,
 ]
 extra_events: List[str] = []
@@ -305,6 +314,7 @@ ax = parts.plot(
     figsize=(10, 8),
     title=f"Runtime composition (absolute, nx={nx_target})",
     rot=45,
+    logy=True,
 )
 ax.set_ylabel("Time [s]")
 ax.legend(loc="upper right", ncols=2)
@@ -601,6 +611,7 @@ else:
         rot=45,
         figsize=(10, 8),
         title=f"Absolute times (nx={nx_target})",
+        logy=True,
     )
     ax.set_ylabel("Time [s]")
     ax.grid(axis="y", ls=":")
@@ -714,16 +725,32 @@ plt.show()
 
 # %%
 df_plot = df.assign(mem_mb=(df.get("mem_rss_peak_kb", np.nan) / 1024.0))
-ax = plt.figure(figsize=(10, 8)).gca()
-for ap, sub in df_plot.groupby("approach"):
+
+markers = ["o", "s", "^", "D", "P", "X", "*", "v", "<", ">", "h"]
+approaches_in_order = list(
+    dict.fromkeys(df_plot["approach"])
+)  # preserve order of appearance
+marker_map = {ap: markers[i % len(markers)] for i, ap in enumerate(approaches_in_order)}
+
+fig, ax = plt.subplots(figsize=(10, 8))
+for ap, sub in df_plot.groupby("approach", sort=False):
     sub = sub.sort_values("mem_mb")
-    ax.plot(sub["mem_mb"], sub["time_total"], marker="o", label=ap, alpha=0.9)
-ax.set_xscale("log")
+    ax.plot(
+        sub["mem_mb"],
+        sub["time_total"],
+        marker=marker_map[ap],
+        markersize=7,
+        markerfacecolor="none",
+        linewidth=1.5,
+        label=ap,
+        alpha=0.9,
+    )
+# ax.set_xscale("log")
 ax.set_yscale("log")
 ax.set_xlabel("RSS peak [MB]")
 ax.set_ylabel("time_total [s]")
 ax.grid(which="both", ls=":")
-ax.legend(loc="best")
+ax.legend(loc="best", title="Approach")
 plt.tight_layout()
 plt.savefig(RESULTS_PATH / "time_vs_memory_lines.png")
 plt.show()
