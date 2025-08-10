@@ -1,19 +1,28 @@
 """
-PETSc performance profiling for DPP experiments.
+PETSc profiling utilities for DPP experiments.
 
-Backends (in order when backend="auto"):
-1) JSON (-log_view :tmp.json:json + PETSc.Log.view) → parse, average across ranks.
-2) ASCII (Viewer ASCII, one file per rank) → parse, average across ranks.
-3) Events API (PETSc.Log.Event.getPerfInfo before/after) → robust times & FLOPS.
-4) Stage API (per-stage before/after snapshot).
-5) Wallclock fallback (total only under KSPSolve).
+This module provides utilities to:
+    - Run a profiled solve on a given mesh resolution and solver approach.
+    - Collect PETSc event timings and FLOPs from multiple backends.
+    - Aggregate per-rank metrics and expose summary data structures.
+    - Capture memory statistics (RSS, Mat/PMat/factor nonzeros and memory).
+    - Save profiling results to CSV/JSON for post-processing.
 
-Records:
-- Event times (and FLOPS) per logical event, plus flops_total.
-- Memory metrics: RSS peak/delta per rank, Mat/PMat/Factor nz and memory (MB).
-- Universal time metrics: time_total (avg wall per run) and time_total_repeats (sum across repeats).
+Backends (searched in order when ``backend="auto"``):
+    1) JSON (``-log_view :tmp.json:json`` + ``PETSc.Log.view``) → parse and average.
+    2) ASCII (ASCII viewer, one file per rank) → parse and average.
+    3) Events API (``PETSc.Log.Event.getPerfInfo`` diff) → robust times & FLOPs.
+    4) Stage API (per-stage snapshot before/after run).
+    5) Wall-clock fallback (total only, reported as ``KSPSolve``).
 
-Optionally applies manufactured pressures as Dirichlet BCs (use_manufactured=True).
+Recorded metrics:
+    - Event times and FLOPs per logical event, plus total FLOPs.
+    - Memory: RSS peak/delta per rank; Mat/PMat/factor nonzeros and memory (MB).
+    - Universal wall-clock metrics: ``time_total`` (average per run) and
+      ``time_total_repeats`` (sum across repeats).
+
+Optionally, manufactured pressures are applied as Dirichlet BCs
+(``use_manufactured=True``).
 """
 
 from __future__ import annotations
@@ -58,6 +67,11 @@ except Exception:
 
 
 def ensure_petsc_logging() -> None:
+    """
+    Ensure PETSc logging is initialized once for the current process.
+
+    This call is idempotent and safe to invoke multiple times.
+    """
     global _PETSC_LOG_STARTED
     if not _PETSC_LOG_STARTED:
         PETSc.Log.begin()
@@ -92,6 +106,16 @@ DEFAULT_LOGICAL_EVENTS = [
 
 
 def _match_event(name: str, logical_events: List[str]) -> Optional[str]:
+    """
+    Map a raw PETSc event name to one of the requested logical event names.
+
+    :param name:
+        Raw event name as reported by PETSc.
+    :param logical_events:
+        List of logical event names to match against.
+    :return:
+        The matched logical event name, or ``None`` if no match.
+    """
     for logical in logical_events:
         for alias in EVENT_ALIASES.get(logical, [logical]):
             if name == alias or name.replace(" ", "") == alias.replace(" ", ""):
@@ -100,6 +124,16 @@ def _match_event(name: str, logical_events: List[str]) -> Optional[str]:
 
 
 def _reduce_avg(comm: MPI.Comm, data: Dict[str, float]) -> Dict[str, float]:
+    """
+    Average values in a dict across ranks using MPI allreduce.
+
+    :param comm:
+        MPI communicator.
+    :param data:
+        Mapping from keys to local float values.
+    :return:
+        Mapping with values averaged over all ranks.
+    """
     return {k: comm.allreduce(v, op=MPI.SUM) / comm.size for k, v in data.items()}
 
 
@@ -107,7 +141,14 @@ def _parse_petsc_json(
     path: str, logical_events: List[str]
 ) -> Tuple[Dict[str, float], Dict[str, float]]:
     """
-    Parse PETSc -log_view JSON. Return (times_s, flops) per logical event.
+    Parse JSON output from ``-log_view`` and accumulate times/FLOPs.
+
+    :param path:
+        Path to the JSON file written by PETSc ``Log.view``.
+    :param logical_events:
+        Logical events to accumulate.
+    :return:
+        Tuple of dictionaries ``(event_times, event_flops)`` keyed by logical event.
     """
     with open(path, "r", encoding="utf-8") as f:
         content = f.read().strip()
@@ -115,8 +156,8 @@ def _parse_petsc_json(
             raise ValueError("Empty PETSc JSON log")
         data = json.loads(content)
 
-    times: Dict[str, float] = {e: 0.0 for e in logical_events}
-    flops: Dict[str, float] = {e: 0.0 for e in logical_events}
+    event_times: Dict[str, float] = {e: 0.0 for e in logical_events}
+    event_flops: Dict[str, float] = {e: 0.0 for e in logical_events}
 
     def add_event(ev: Dict[str, Any]) -> None:
         name = ev.get("name", "")
@@ -124,8 +165,8 @@ def _parse_petsc_json(
         f = float(ev.get("flops", ev.get("flop", 0.0)))
         logical = _match_event(name, logical_events)
         if logical is not None:
-            times[logical] = times.get(logical, 0.0) + t
-            flops[logical] = flops.get(logical, 0.0) + f
+            event_times[logical] = event_times.get(logical, 0.0) + t
+            event_flops[logical] = event_flops.get(logical, 0.0) + f
 
     stages = data.get("stages") or []
     if stages:
@@ -137,7 +178,7 @@ def _parse_petsc_json(
             add_event(ev)
     else:
         raise ValueError("Unrecognized PETSc JSON schema")
-    return times, flops
+    return event_times, event_flops
 
 
 # Try to capture Time and optional Flop column (ASCII -log_view)
@@ -150,13 +191,20 @@ def _parse_petsc_ascii_file(
     path: str, logical_events: List[str]
 ) -> Tuple[Dict[str, float], Dict[str, float]]:
     """
-    Parse ASCII -log_view output (one file, one rank). Return (times_s, flops).
+    Parse ASCII ``-log_view`` output (single rank per file).
+
+    :param path:
+        Path to the ASCII log file for this rank.
+    :param logical_events:
+        Logical events to accumulate.
+    :return:
+        Tuple of dictionaries ``(event_times, event_flops)`` keyed by logical event.
     """
-    times: Dict[str, float] = {e: 0.0 for e in logical_events}
-    flops: Dict[str, float] = {e: 0.0 for e in logical_events}
+    event_times: Dict[str, float] = {e: 0.0 for e in logical_events}
+    event_flops: Dict[str, float] = {e: 0.0 for e in logical_events}
 
     if not os.path.exists(path) or os.path.getsize(path) == 0:
-        return times, flops
+        return event_times, event_flops
 
     with open(path, "r", encoding="utf-8", errors="ignore") as file:
         lines = file.readlines()
@@ -177,13 +225,13 @@ def _parse_petsc_ascii_file(
                 f = float(m.group(4)) if m.group(4) is not None else 0.0
                 logical = _match_event(raw_name, logical_events)
                 if logical is not None:
-                    times[logical] = times.get(logical, 0.0) + t
-                    flops[logical] = flops.get(logical, 0.0) + f
-    return times, flops
+                    event_times[logical] = event_times.get(logical, 0.0) + t
+                    event_flops[logical] = event_flops.get(logical, 0.0) + f
+    return event_times, event_flops
 
 
 class _StageCtx:
-    """Fallback stage API reader."""
+    """Fallback stage API reader for PETSc event metrics."""
 
     def __init__(self, name: str):
         self.stage = PETSc.Log.Stage(name)
@@ -198,6 +246,14 @@ class _StageCtx:
     def times_and_flops(
         self, logical_events: List[str]
     ) -> Tuple[Dict[str, float], Dict[str, float]]:
+        """
+        Aggregate times and FLOPs across event aliases within this stage.
+
+        :param logical_events:
+            Logical event names to query.
+        :return:
+            Tuple ``(event_times, event_flops)`` keyed by logical event.
+        """
         t_out: Dict[str, float] = {}
         f_out: Dict[str, float] = {}
         for logical in logical_events:
@@ -218,10 +274,15 @@ class _StageCtx:
 
 def _snapshot_events(logical_events: List[str]) -> Tuple[Dict[str, float], Dict[str, float]]:
     """
-    Snapshot current PETSc per-event totals (time, flops) aggregated across stages.
+    Snapshot current PETSc per-event totals (time, FLOPs) across stages.
+
+    :param logical_events:
+        Logical event names to query.
+    :return:
+        Tuple ``(event_times, event_flops)`` keyed by logical event.
     """
-    times: Dict[str, float] = {e: 0.0 for e in logical_events}
-    flops: Dict[str, float] = {e: 0.0 for e in logical_events}
+    event_times: Dict[str, float] = {e: 0.0 for e in logical_events}
+    event_flops: Dict[str, float] = {e: 0.0 for e in logical_events}
     for logical in logical_events:
         t_sum = 0.0
         f_sum = 0.0
@@ -233,9 +294,9 @@ def _snapshot_events(logical_events: List[str]) -> Tuple[Dict[str, float], Dict[
                 f_sum += float(info.get("flops", info.get("flop", 0.0)))
             except Exception:
                 pass
-        times[logical] = t_sum
-        flops[logical] = f_sum
-    return times, flops
+        event_times[logical] = t_sum
+        event_flops[logical] = f_sum
+    return event_times, event_flops
 
 
 def _profile_with_events_api(
@@ -245,30 +306,41 @@ def _profile_with_events_api(
     repeats: int,
 ) -> Tuple[Dict[str, float], Dict[str, float], float]:
     """
-    Use PETSc.Log.Event.getPerfInfo() before/after the run and take differences.
+    Use ``PETSc.Log.Event.getPerfInfo`` before/after the run and take differences.
+
+    :param comm:
+        MPI communicator.
+    :param run_fn:
+        Callable that executes a single solve.
+    :param logical_events:
+        Logical event names to track.
+    :param repeats:
+        Number of repeated runs to include in a single measurement.
+    :return:
+        ``(event_times, event_flops, wall_time)`` where wall_time is seconds.
     """
     ensure_petsc_logging()
     comm.barrier()
-    before_t, before_f = _snapshot_events(logical_events)
-    t0 = time.perf_counter()
+    times_before, flops_before = _snapshot_events(logical_events)
+    start_time = time.perf_counter()
     for _ in range(max(1, repeats)):
         run_fn()
-    wall = time.perf_counter() - t0
+    wall_time = time.perf_counter() - start_time
     comm.barrier()
-    after_t, after_f = _snapshot_events(logical_events)
+    times_after, flops_after = _snapshot_events(logical_events)
 
-    local_t = {
-        k: max(0.0, after_t.get(k, 0.0) - before_t.get(k, 0.0))
-        for k in set(before_t) | set(after_t)
+    local_times = {
+        k: max(0.0, times_after.get(k, 0.0) - times_before.get(k, 0.0))
+        for k in set(times_before) | set(times_after)
     }
-    local_f = {
-        k: max(0.0, after_f.get(k, 0.0) - before_f.get(k, 0.0))
-        for k in set(before_f) | set(after_f)
+    local_flops = {
+        k: max(0.0, flops_after.get(k, 0.0) - flops_before.get(k, 0.0))
+        for k in set(flops_before) | set(flops_after)
     }
 
-    times = _reduce_avg(comm, local_t)
-    flops = _reduce_avg(comm, local_f)
-    return times, flops, wall
+    event_times = _reduce_avg(comm, local_times)
+    event_flops = _reduce_avg(comm, local_flops)
+    return event_times, event_flops, wall_time
 
 
 def _profile_with_log_view_json(
@@ -277,28 +349,33 @@ def _profile_with_log_view_json(
     logical_events: List[str],
     repeats: int,
 ) -> Tuple[Dict[str, float], Dict[str, float], float]:
-    handle, path = tempfile.mkstemp(suffix=".json", prefix="petsc_log_")
-    os.close(handle)
+    """
+    Profile using PETSc ``-log_view`` JSON output.
+
+    See ``_parse_petsc_json`` for parsing details.
+    """
+    fd_handle, json_path = tempfile.mkstemp(suffix=".json", prefix="petsc_log_")
+    os.close(fd_handle)
     try:
         opts = PETSc.Options()
-        opts["log_view"] = f":{path}:json"
-        t0 = time.perf_counter()
+        opts["log_view"] = f":{json_path}:json"
+        start_time = time.perf_counter()
         for _ in range(max(1, repeats)):
             run_fn()
-        wall = time.perf_counter() - t0
+        wall_time = time.perf_counter() - start_time
         PETSc.Log.view()
-        local_times, local_flops = _parse_petsc_json(path, logical_events)
-        times = _reduce_avg(comm, local_times)
-        flops = _reduce_avg(comm, local_flops)
-        return times, flops, wall
+        local_times, local_flops = _parse_petsc_json(json_path, logical_events)
+        event_times = _reduce_avg(comm, local_times)
+        event_flops = _reduce_avg(comm, local_flops)
+        return event_times, event_flops, wall_time
     finally:
         try:
             PETSc.Options().delValue("log_view")
         except Exception:
             pass
         try:
-            if os.path.exists(path):
-                os.remove(path)
+            if os.path.exists(json_path):
+                os.remove(json_path)
         except Exception:
             pass
 
@@ -312,26 +389,26 @@ def _profile_with_log_view_ascii(
     """
     Use ASCII viewer; each rank writes its own file to avoid interleaving.
     """
-    handle, base_path = tempfile.mkstemp(suffix=".log", prefix="petsc_log_")
-    os.close(handle)
-    os.remove(base_path)  # we will create rank-specific files
+    fd_handle, base_path = tempfile.mkstemp(suffix=".log", prefix="petsc_log_")
+    os.close(fd_handle)
+    os.remove(base_path)  # create rank-specific files later
 
     rank = comm.rank
     path = f"{base_path}.rank{rank}"
     try:
-        t0 = time.perf_counter()
+        start_time = time.perf_counter()
         for _ in range(max(1, repeats)):
             run_fn()
-        wall = time.perf_counter() - t0
+        wall_time = time.perf_counter() - start_time
 
         viewer = PETSc.Viewer().createASCII(path, comm=PETSc.COMM_SELF)
         PETSc.Log.view(viewer)
         viewer.destroy()
 
         local_times, local_flops = _parse_petsc_ascii_file(path, logical_events)
-        times = _reduce_avg(comm, local_times)
-        flops = _reduce_avg(comm, local_flops)
-        return times, flops, wall
+        event_times = _reduce_avg(comm, local_times)
+        event_flops = _reduce_avg(comm, local_flops)
+        return event_times, event_flops, wall_time
     finally:
         try:
             if os.path.exists(path):
@@ -346,30 +423,35 @@ def _profile_with_stage_api(
     logical_events: List[str],
     repeats: int,
 ) -> Tuple[Dict[str, float], Dict[str, float], float]:
-    st = _StageCtx("perphil_solve")
-    with st:
-        before_t, before_f = st.times_and_flops(logical_events)
-        t0 = time.perf_counter()
+    """
+    Profile inside a PETSc stage by taking before/after snapshots.
+    """
+    stage_ctx = _StageCtx("perphil_solve")
+    with stage_ctx:
+        times_before, flops_before = stage_ctx.times_and_flops(logical_events)
+        start_time = time.perf_counter()
         for _ in range(max(1, repeats)):
             run_fn()
-        wall = time.perf_counter() - t0
-        after_t, after_f = st.times_and_flops(logical_events)
-    local_t = {
-        k: max(0.0, after_t.get(k, 0.0) - before_t.get(k, 0.0))
-        for k in set(before_t) | set(after_t)
+        wall_time = time.perf_counter() - start_time
+        times_after, flops_after = stage_ctx.times_and_flops(logical_events)
+    local_times = {
+        k: max(0.0, times_after.get(k, 0.0) - times_before.get(k, 0.0))
+        for k in set(times_before) | set(times_after)
     }
-    local_f = {
-        k: max(0.0, after_f.get(k, 0.0) - before_f.get(k, 0.0))
-        for k in set(before_f) | set(after_f)
+    local_flops = {
+        k: max(0.0, flops_after.get(k, 0.0) - flops_before.get(k, 0.0))
+        for k in set(flops_before) | set(flops_after)
     }
-    times = _reduce_avg(comm, local_t)
-    flops = _reduce_avg(comm, local_f)
-    return times, flops, wall
+    event_times = _reduce_avg(comm, local_times)
+    event_flops = _reduce_avg(comm, local_flops)
+    return event_times, event_flops, wall_time
 
 
 def _get_rss_kb() -> int:
     """
-    Peak resident set size in KB (normalized). Linux ru_maxrss is KB; macOS is bytes.
+    Peak resident set size in KB (normalized across OSes).
+
+    Linux ``ru_maxrss`` is already in KB, whereas macOS returns bytes.
     """
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     # Heuristic: normalize to KB if value looks like bytes (macOS)
@@ -379,7 +461,13 @@ def _get_rss_kb() -> int:
 def _collect_matrix_memory(solver_obj: Any) -> Dict[str, float]:
     """
     Collect matrix memory stats for A/P and factor (if available).
-    Returns keys: mat_nz_used, mat_nz_allocated, mat_memory_mb, pmat_*, factor_*.
+
+    :param solver_obj:
+        An object exposing PETSc solver internals (KSP/SNES) from which to
+        extract matrices.
+    :return:
+        Dict with keys: ``mat_nz_used``, ``mat_nz_allocated``, ``mat_memory_mb``,
+        and corresponding ``pmat_*`` and ``factor_*`` entries when available.
     """
     out: Dict[str, float] = {}
 
@@ -435,6 +523,25 @@ def _collect_matrix_memory(solver_obj: Any) -> Dict[str, float]:
 
 @dataclass
 class PerfResult:
+    """
+    Result of a profiled DPP solve.
+
+    :param approach:
+        Human-readable solver approach name.
+    :param nx: Number of elements in x-direction.
+    :param ny: Number of elements in y-direction.
+    :param dofs: Total number of degrees of freedom in the mixed space.
+    :param num_cells: Total cell count in the mesh (global across ranks).
+    :param iterations: Iteration count reported by KSP/SNES when available.
+    :param residual: Final residual reported by the solver pipeline.
+    :param times: Mapping from logical event name to time in seconds.
+    :param flops: Mapping from logical event name to total FLOPs.
+    :param metadata: Additional metadata (PETSc/Firedrake versions, backend, etc.).
+    :param memory: Optional memory metrics dict (RSS and matrix memory).
+    :param time_total: Average wall-clock time per run (seconds).
+    :param time_total_repeats: Total wall-clock time across repeats (seconds).
+    """
+
     approach: str
     nx: int
     ny: int
@@ -451,6 +558,12 @@ class PerfResult:
     time_total_repeats: float = 0.0  # total wall time across repeats (seconds)
 
     def to_dict(self) -> Dict[str, Any]:
+        """
+        Flatten nested structures for convenient DataFrame/CSV export.
+
+        :return:
+            A single-level dictionary with event and memory fields expanded.
+        """
         base = asdict(self)
         # Flatten times
         for k, v in self.times.items():
@@ -476,6 +589,9 @@ class PerfResult:
 
 
 def _enable_convergence_history_if_possible(solver_obj: Any) -> None:
+    """
+    Enable KSP/SNES convergence history recording when available.
+    """
     try:
         snes = getattr(solver_obj, "snes", None)
         if snes is not None and hasattr(snes, "setConvergenceHistory"):
@@ -493,6 +609,9 @@ def _enable_convergence_history_if_possible(solver_obj: Any) -> None:
 
 
 def _extract_ksp_iters_if_possible(solver_obj: Any) -> Optional[int]:
+    """
+    Try to extract KSP iteration count from a KSP/SNES handle.
+    """
     try:
         snes = getattr(solver_obj, "snes", None)
         if snes is not None and hasattr(snes, "ksp"):
@@ -506,6 +625,9 @@ def _extract_ksp_iters_if_possible(solver_obj: Any) -> Optional[int]:
 
 
 def _extract_solution_handle(sol: Any) -> Any:
+    """
+    Retrieve a PETSc solver handle (KSP/SNES) from a solution-like object.
+    """
     for key in ("petsc_solver", "solver", "petsc_snes", "petsc_ksp"):
         if hasattr(sol, key):
             return getattr(sol, key)
@@ -525,7 +647,23 @@ def run_perf_once(
     use_manufactured: bool = True,  # apply manufactured pressures as Dirichlet BCs
 ) -> PerfResult:
     """
-    Run one profiled solve (optionally repeated) and return PETSc event times and flops.
+    Run one profiled solve (optionally repeated) and collect PETSc metrics.
+
+    :param nx: Number of elements in x-direction.
+    :param ny: Number of elements in y-direction.
+    :param approach: Solver approach to use.
+    :param eager: If True, run a warm-up solve before profiling.
+    :param logical_events: Optional list of logical event names to track; if None,
+        a default set is used.
+    :param force_nonzero_rhs: If True and not using manufactured BCs, apply
+        constant non-zero Dirichlet values to avoid trivial solves.
+    :param bc_values: Optional pair of constants for boundary values when
+        ``force_nonzero_rhs`` is True.
+    :param repeats: Number of times to run the solve inside a single measurement.
+    :param backend: Profiling backend ("auto" | "json" | "ascii" | "events" | "stage" | "wall").
+    :param use_manufactured: Whether to apply manufactured pressure BCs.
+    :return:
+        PerfResult with aggregated times, FLOPs, memory, and metadata.
     """
     ensure_petsc_logging()
 
@@ -561,7 +699,7 @@ def run_perf_once(
         _enable_convergence_history_if_possible(_extract_solution_handle(sol_warm))
 
     # Runner closure
-    def run_once():
+    def run_once() -> None:
         solve_on_mesh(W, approach, params=params, bcs=bcs)
 
     # Record RSS before profiling this case (per-rank), to compute delta
@@ -571,50 +709,50 @@ def run_perf_once(
     backends = [backend] if backend != "auto" else ["json", "ascii", "events", "stage", "wall"]
 
     wall_total = 0.0
-    for be in backends:
+    for backend_name in backends:
         try:
-            if be == "json":
-                times, flops, wall = _profile_with_log_view_json(
+            if backend_name == "json":
+                event_times, event_flops, wall_time = _profile_with_log_view_json(
                     comm, run_once, logical_events, repeats
                 )
-            elif be == "ascii":
-                times, flops, wall = _profile_with_log_view_ascii(
+            elif backend_name == "ascii":
+                event_times, event_flops, wall_time = _profile_with_log_view_ascii(
                     comm, run_once, logical_events, repeats
                 )
-            elif be == "events":
-                times, flops, wall = _profile_with_events_api(
+            elif backend_name == "events":
+                event_times, event_flops, wall_time = _profile_with_events_api(
                     comm, run_once, logical_events, repeats
                 )
-            elif be == "stage":
-                times, flops, wall = _profile_with_stage_api(
+            elif backend_name == "stage":
+                event_times, event_flops, wall_time = _profile_with_stage_api(
                     comm, run_once, logical_events, repeats
                 )
             else:
-                t0 = time.perf_counter()
+                start_time = time.perf_counter()
                 for _ in range(max(1, repeats)):
                     run_once()
-                wall = time.perf_counter() - t0
-                times = {e: 0.0 for e in logical_events}
-                times["KSPSolve"] = wall
-                flops = {e: 0.0 for e in logical_events}
+                wall_time = time.perf_counter() - start_time
+                event_times = {e: 0.0 for e in logical_events}
+                event_times["KSPSolve"] = wall_time
+                event_flops = {e: 0.0 for e in logical_events}
             # Accept if any event is nonzero or backend is "wall"/"events"
-            if (sum(times.values()) > 0.0) or be in ("wall", "events"):
-                backend_used = be
-                wall_total = wall
+            if (sum(event_times.values()) > 0.0) or backend_name in ("wall", "events"):
+                backend_used = backend_name
+                wall_total = wall_time
                 break
         except Exception:
             continue
     else:
         # If all failed, use wallclock only
-        t0 = time.perf_counter()
+        start_time = time.perf_counter()
         for _ in range(max(1, repeats)):
             run_once()
-        wall = time.perf_counter() - t0
-        times = {e: 0.0 for e in logical_events}
-        times["KSPSolve"] = wall
-        flops = {e: 0.0 for e in logical_events}
+        wall_time = time.perf_counter() - start_time
+        event_times = {e: 0.0 for e in logical_events}
+        event_times["KSPSolve"] = wall_time
+        event_flops = {e: 0.0 for e in logical_events}
         backend_used = "wall"
-        wall_total = wall
+        wall_total = wall_time
 
     # Solve once to collect iteration/residual and build operators for memory stats
     sol = solve_on_mesh(W, approach, params=params, bcs=bcs)
@@ -653,8 +791,8 @@ def run_perf_once(
         num_cells=int(num_cells),
         iterations=iterations,
         residual=residual,
-        times=times,
-        flops=flops,
+        times=event_times,
+        flops=event_flops,
         metadata=meta,
         memory=memory,
         time_total=(wall_total / max(1, repeats)),
@@ -673,6 +811,21 @@ def run_perf_sweep(
     backend: str = "auto",
     use_manufactured: bool = True,
 ) -> pd.DataFrame:
+    """
+    Run a sweep over mesh sizes and approaches, returning a tidy DataFrame.
+
+    :param mesh_sizes: List of ``nx`` values (``ny=nx`` is assumed).
+    :param approaches: Solver approaches to profile.
+    :param logical_events: Optional list of logical event names to track.
+    :param eager: If True, perform a warm-up solve within each case.
+    :param force_nonzero_rhs: Use non-zero Dirichlet values when not manufactured.
+    :param bc_values: Optional pair of constants for boundary values.
+    :param repeats: Number of repeats per case for timing stability.
+    :param backend: Profiling backend selection policy.
+    :param use_manufactured: Whether to apply manufactured pressure BCs.
+    :return:
+        pandas DataFrame, one row per case with flattened metrics.
+    """
     rows: List[Dict[str, Any]] = []
     for nx in mesh_sizes:
         ny = nx
@@ -702,11 +855,23 @@ def run_perf_sweep(
 
 
 def save_perf_csv(df: pd.DataFrame, path: str) -> None:
+    """
+    Save profiling results DataFrame to CSV.
+
+    :param df: DataFrame produced by ``run_perf_sweep`` or similar.
+    :param path: Output CSV path.
+    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     df.to_csv(path, index=False)
 
 
 def save_perf_json(df: pd.DataFrame, path: str) -> None:
+    """
+    Save profiling results DataFrame to JSON (records orientation).
+
+    :param df: DataFrame produced by ``run_perf_sweep`` or similar.
+    :param path: Output JSON path.
+    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(df.to_dict(orient="records"), f, indent=2)
