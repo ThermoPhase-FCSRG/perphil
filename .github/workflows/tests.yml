@@ -36,6 +36,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install invoke rich
 
+      - name: Install build accelerators (ccache)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ccache
+          echo "/usr/lib/ccache" >> $GITHUB_PATH
+
       - name: Determine Firedrake latest tag
         id: firedrake
         run: |
@@ -52,23 +58,45 @@ jobs:
           VER=$(python3 firedrake-configure --show-petsc-version)
           echo "version=$VER" >> "$GITHUB_OUTPUT"
 
+      - name: Hash PETSc configure options
+        id: petsc-cfg
+        run: |
+          CFG=$(python3 firedrake-configure --show-petsc-configure-options)
+          # Normalize whitespace to stabilize hash
+          CFG_NORM=$(echo "$CFG" | tr -s ' \n' ' ')
+          echo "$CFG_NORM" > petsc_configure_flags.txt
+          HASH=$(echo -n "$CFG_NORM" | sha256sum | cut -d ' ' -f1)
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+
       - name: Cache PETSc build directory
         id: cache-petsc
         uses: actions/cache@v4
         with:
           path: |
             petsc-${{ steps.petsc.outputs.version }}
-          key: ${{ runner.os }}-petsc-${{ steps.petsc.outputs.version }}
+          key: ${{ runner.os }}-petsc-${{ steps.petsc.outputs.version }}-${{ steps.petsc-cfg.outputs.hash }}
+
+      - name: Cache ccache store
+        id: cache-ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-ccache-${{ steps.petsc.outputs.version }}-${{ steps.petsc-cfg.outputs.hash }}
 
       - name: Cache Python virtualenv (.venv)
         id: cache-venv
         uses: actions/cache@v4
         with:
           path: .venv
-          key: ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-${{ steps.firedrake.outputs.tag }}-${{ steps.petsc.outputs.version }}-${{ hashFiles('pyproject.toml', 'tasks.py') }}
+          key: ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-${{ steps.firedrake.outputs.tag }}-${{ steps.petsc.outputs.version }}-${{ steps.petsc-cfg.outputs.hash }}-${{ hashFiles('pyproject.toml', 'tasks.py') }}
 
       - name: Install Firedrake and PETSc via Invoke tasks (uses .venv)
+        env:
+          CC: "ccache mpicc"
+          CXX: "ccache mpicxx"
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
         run: |
+          mkdir -p "$CCACHE_DIR"
           inv install-firedrake
 
       - name: Run tests with coverage
