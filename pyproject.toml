@@ -46,6 +46,7 @@ dev = [
   "mypy",
   "codespell",
   "pytest",
+  "pytest-cov",
   "pytest-regressions",
 ]
 
