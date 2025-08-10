@@ -94,9 +94,8 @@ jobs:
         env:
           CC: "ccache mpicc"
           CXX: "ccache mpicxx"
-          CCACHE_DIR: ${{ github.workspace }}/.ccache
         run: |
-          mkdir -p "$CCACHE_DIR"
+          mkdir -p ~/.ccache
           inv install-firedrake
 
       - name: Run tests with coverage
