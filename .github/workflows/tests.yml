@@ -97,7 +97,7 @@ jobs:
             gfortran \
             python3-venv \
             python3-dev \
-            openmpi-bin libopenmpi-dev \
+            mpich libmpich-dev \
             libhdf5-openmpi-dev libhdf5-mpi-dev \
             pkg-config cmake git zlib1g-dev
 
