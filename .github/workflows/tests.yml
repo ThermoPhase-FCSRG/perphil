@@ -93,6 +93,28 @@ jobs:
           path: .venv
           key: ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-${{ steps.firedrake.outputs.tag }}-${{ steps.petsc.outputs.version }}-${{ steps.petsc-cfg.outputs.hash }}-${{ hashFiles('pyproject.toml', 'tasks.py') }}
 
+      - name: Install core system packages for Firedrake/PETSc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gfortran \
+            python3-venv \
+            python3-dev \
+            openmpi-bin libopenmpi-dev \
+            libhdf5-openmpi-dev libhdf5-mpi-dev \
+            pkg-config cmake git zlib1g-dev
+
+      - name: Install additional system packages via firedrake-configure
+        run: |
+          inv install-system-packages
+
+      - name: Create virtual environment (if cache missed)
+        run: |
+          if [ ! -d .venv ]; then
+            python3 -m venv .venv
+          fi
+
       - name: Install Firedrake and PETSc via Invoke tasks (uses .venv)
         env:
           CC: "ccache mpicc"
