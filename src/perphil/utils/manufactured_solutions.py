@@ -53,6 +53,47 @@ def exact_expressions(mesh: fd.Mesh, dpp_params: DPPParameters) -> tuple[Expr, E
     return u1_expr, p1_expr, u2_expr, p2_expr
 
 
+def exact_expressions_3d(mesh: fd.Mesh, dpp_params: DPPParameters) -> tuple[Expr, Expr, Expr, Expr]:
+    """
+    3D manufactured analytic expressions (u1, p1, u2, p2) based on the paper's Eq. (6.3),
+    corrected so that p2 uses k2 in the denominator.
+
+    Unknowns follow the primal two-pressure DPP model with Darcy velocities:
+        u1 = -(k1/mu) grad p1,  u2 = -(k2/mu) grad p2
+
+    p1(x,y,z) = (mu/pi) e^{pi x} (sin(pi y) + sin(pi z)) - (mu/(beta k1)) (e^{eta y} + e^{eta z})
+    p2(x,y,z) = (mu/pi) e^{pi x} (sin(pi y) + sin(pi z)) + (mu/(beta k2)) (e^{eta y} + e^{eta z})
+
+    :param mesh: Firedrake Mesh (3D)
+    :param dpp_params: DPP parameters (k1, k2, beta, mu). eta is taken from dpp_params.eta
+    :return: Tuple of UFL expressions (u1_expr, p1_expr, u2_expr, p2_expr)
+    """
+    # Coordinates (expects 3D mesh)
+    x, y, z = fd.SpatialCoordinate(mesh)
+
+    # Parameters
+    k1: fd.Constant = dpp_params.k1  # type: ignore[assignment]
+    k2: fd.Constant = dpp_params.k2  # type: ignore[assignment]
+    beta: fd.Constant = dpp_params.beta  # type: ignore[assignment]
+    mu: fd.Constant = dpp_params.mu  # type: ignore[assignment]
+    eta: fd.Constant = dpp_params.eta  # derived from (k1,k2,beta)
+
+    # Common factors
+    common_xy = fd.exp(fd.pi * x)
+    s = fd.sin(fd.pi * y) + fd.sin(fd.pi * z)
+    e_y = fd.exp(eta * y)
+    e_z = fd.exp(eta * z)
+
+    p1_expr = (mu / fd.pi) * common_xy * s - (mu / (beta * k1)) * (e_y + e_z)
+    p2_expr = (mu / fd.pi) * common_xy * s + (mu / (beta * k2)) * (e_y + e_z)
+
+    # Velocities from Darcy's law: u = -(k/mu) grad p
+    u1_expr = -(k1 / mu) * fd.grad(p1_expr)
+    u2_expr = -(k2 / mu) * fd.grad(p2_expr)
+
+    return u1_expr, p1_expr, u2_expr, p2_expr
+
+
 def interpolate_exact(
     mesh: fd.Mesh,
     velocity_space: fd.FunctionSpace,
