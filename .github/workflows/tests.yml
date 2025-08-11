@@ -7,7 +7,7 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
   checks: write
 
@@ -102,6 +102,8 @@ jobs:
           inv install-firedrake
 
       - name: Run tests with coverage
+        env:
+          COVERAGE_RCFILE: pyproject.toml
         run: |
           source .venv/bin/activate
           python -m pip install -e '.[dev]'
@@ -121,6 +123,12 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           ANNOTATE_MISSING_LINES: true
           ANNOTATION_TYPE: error
+
+      - name: Coverage default-branch data (badge/dashboard)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: py-cov-action/python-coverage-comment-action@v3
+        with:
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Check diff coverage
         if: github.event_name == 'pull_request'
