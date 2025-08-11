@@ -45,6 +45,11 @@ dev = [
   "ruff",
   "mypy",
   "codespell",
+  "pytest",
+  "coverage",
+  "pytest-cov",
+  "pytest-regressions",
+  "diff-cover",
 ]
 
 [tool.setuptools]
@@ -55,3 +60,18 @@ package-dir = { "" = "src" }
 # look under src/ for any packages matching "mypackage*"
 where  = ["src"]
 include = ["perphil*"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = [
+  "src",
+]
+addopts = "-q -v"
+markers = [
+  "regression: regression tests using pytest-regressions",
+]
+
+[tool.coverage.run]
+# Ensure coverage stores relative paths so tools like python-coverage-comment-action
+# can parse data generated in CI checkouts
+relative_files = true

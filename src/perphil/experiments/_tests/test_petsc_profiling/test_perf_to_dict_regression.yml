@@ -1,0 +1,12 @@
+approach: GMRES
+dofs: 18
+metadata:
+  backend: events
+  petsc_version:
+  - 3
+  - 23
+  - 4
+  repeats: 1
+num_cells: 4
+nx: 2
+ny: 2

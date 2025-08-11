@@ -1,0 +1,131 @@
+name: Tests and Coverage
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        id: setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install task runner (Invoke) and utilities used by tasks
+        run: |
+          python -m pip install --upgrade pip
+          pip install invoke rich
+
+      - name: Install build accelerators (ccache)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ccache
+          echo "/usr/lib/ccache" >> $GITHUB_PATH
+
+      - name: Determine Firedrake latest tag
+        id: firedrake
+        run: |
+          TAG=$(curl -s https://api.github.com/repos/firedrakeproject/firedrake/releases/latest | grep -E '"tag_name"' | cut -d '"' -f 4)
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download firedrake-configure (for PETSc version discovery)
+        run: |
+          inv download-firedrake-configure
+
+      - name: Determine PETSc version required by Firedrake
+        id: petsc
+        run: |
+          VER=$(python3 firedrake-configure --show-petsc-version)
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Hash PETSc configure options
+        id: petsc-cfg
+        run: |
+          CFG=$(python3 firedrake-configure --show-petsc-configure-options)
+          # Normalize whitespace to stabilize hash
+          CFG_NORM=$(echo "$CFG" | tr -s ' \n' ' ')
+          echo "$CFG_NORM" > petsc_configure_flags.txt
+          HASH=$(echo -n "$CFG_NORM" | sha256sum | cut -d ' ' -f1)
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+
+      - name: Cache PETSc build directory
+        id: cache-petsc
+        uses: actions/cache@v4
+        with:
+          path: |
+            petsc-${{ steps.petsc.outputs.version }}
+          key: ${{ runner.os }}-petsc-${{ steps.petsc.outputs.version }}-${{ steps.petsc-cfg.outputs.hash }}
+
+      - name: Cache ccache store
+        id: cache-ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-ccache-${{ steps.petsc.outputs.version }}-${{ steps.petsc-cfg.outputs.hash }}
+
+      - name: Cache Python virtualenv (.venv)
+        id: cache-venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-${{ steps.firedrake.outputs.tag }}-${{ steps.petsc.outputs.version }}-${{ steps.petsc-cfg.outputs.hash }}-${{ hashFiles('pyproject.toml', 'tasks.py') }}
+
+      - name: Install Firedrake and PETSc via Invoke tasks (uses .venv)
+        env:
+          CC: "ccache mpicc"
+          CXX: "ccache mpicxx"
+        run: |
+          mkdir -p ~/.ccache
+          inv install-firedrake
+
+      - name: Run tests with coverage
+        run: |
+          source .venv/bin/activate
+          python -m pip install -e '.[dev]'
+          pytest --cov=src/perphil --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+
+      - name: Upload Coverage PR comment
+        if: github.event_name == 'pull_request'
+        uses: py-cov-action/python-coverage-comment-action@v3
+        with:
+          GITHUB_TOKEN: ${{ github.token }}
+          ANNOTATE_MISSING_LINES: true
+          ANNOTATION_TYPE: error
+
+      - name: Check diff coverage
+        if: github.event_name == 'pull_request'
+        run: |
+          source .venv/bin/activate
+          # Ensure we have the base branch locally for comparison
+          git fetch --no-tags --prune --depth=100 origin +refs/heads/${{ github.event.pull_request.base.ref }}:refs/remotes/origin/${{ github.event.pull_request.base.ref }}
+          diff-cover coverage.xml --compare-branch origin/${{ github.event.pull_request.base.ref }} --fail-under 60

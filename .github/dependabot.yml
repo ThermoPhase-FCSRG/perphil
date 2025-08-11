@@ -1,0 +1,30 @@
+version: 2
+updates:
+  # Keep GitHub Actions up-to-date with minimal noise
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: UTC
+    target-branch: main
+    open-pull-requests-limit: 5
+    rebase-strategy: auto
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: chore
+      include: scope
+    reviewers:
+      - volpatto
+    # Group only minor/patch updates; major updates come as separate PRs
+    groups:
+      github-actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
