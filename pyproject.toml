@@ -70,3 +70,8 @@ addopts = "-q -v"
 markers = [
   "regression: regression tests using pytest-regressions",
 ]
+
+[tool.coverage.run]
+# Ensure coverage stores relative paths so tools like python-coverage-comment-action
+# can parse data generated in CI checkouts
+relative_files = true
