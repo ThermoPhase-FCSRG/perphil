@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         id: setup-python
@@ -111,46 +113,18 @@ jobs:
           name: coverage-xml
           path: coverage.xml
 
-      - name: Generate coverage summary
-        id: cov
+      - name: Upload Coverage PR comment
+        if: github.event_name == 'pull_request'
+        uses: py-cov-action/python-coverage-comment-action@v3
+        with:
+          GITHUB_TOKEN: ${{ github.token }}
+          ANNOTATE_MISSING_LINES: true
+          ANNOTATION_TYPE: error
+
+      - name: Check diff coverage
         if: github.event_name == 'pull_request'
         run: |
-          python - <<'PY'
-          import os, xml.etree.ElementTree as ET
-          tree = ET.parse('coverage.xml')
-          root = tree.getroot()
-          # coverage.py XML has 'line-rate' on root
-          try:
-              rate = float(root.attrib.get('line-rate', '0')) * 100.0
-          except Exception:
-              rate = 0.0
-          comment = f"<!-- coverage-report -->\nCoverage: {rate:.2f}%\n"
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write('comment<<EOF\n')
-              f.write(comment)
-              f.write('\nEOF\n')
-          PY
-
-      - name: Post/Update coverage comment
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const marker = '<!-- coverage-report -->';
-            const body = `${{ steps.cov.outputs.comment }}`;
-            const pr = context.payload.pull_request;
-            if (!pr) {
-              core.info('Not a pull request, skipping comment.');
-              return;
-            }
-            const { owner, repo } = context.repo;
-            const issue_number = pr.number;
-            const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number });
-            const existing = comments.find(c => c.user && c.user.type === 'Bot' && c.body && c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-              core.info('Updated existing coverage comment.');
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number, body });
-              core.info('Created new coverage comment.');
-            }
+          source .venv/bin/activate
+          # Ensure we have the base branch locally for comparison
+          git fetch --no-tags --prune --depth=100 origin +refs/heads/${{ github.event.pull_request.base.ref }}:refs/remotes/origin/${{ github.event.pull_request.base.ref }}
+          diff-cover coverage.xml --compare-branch origin/${{ github.event.pull_request.base.ref }} --fail-under 60

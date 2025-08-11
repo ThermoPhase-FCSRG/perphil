@@ -445,6 +445,182 @@ def dev_install(ctx):
 
 @task(
     help={
+        "numprocess": "Num of processes to run pytest in parallel",
+        "verbose": "Run pytest in verbose mode",
+        "color": "Colorize pytest output",
+        "check_coverage": "Display coverage summary after running the tests",
+        "generate_report": "Generate pytest report and save it as a xml file (named pytest.xml)",
+        "generate_cov_xml": "Generate coverage report and save it as a xml file (named coverage.xml)",
+        "record_output": "Record all the pytest CLI output to pytest-coverage.txt file",
+    },
+    optional=["numprocess"],
+)
+def tests(
+    ctx,
+    numprocess=-1,
+    verbose=True,
+    color=True,
+    check_coverage=False,
+    generate_cov_xml=False,
+    generate_report=False,
+    record_output=False,
+):
+    """
+    Run tests with pytest.
+    """
+    task_output_message = "Running the tests"
+    _task_screen_log(task_output_message)
+
+    base_command = "pytest -ra -q"
+    if verbose:
+        base_command += " -v"
+
+    if color:
+        base_command += " --color=yes"
+
+    if numprocess != 1:
+        base_command += " -n"
+        if numprocess == -1:
+            base_command += " auto"
+        elif numprocess > 1:
+            base_command += f" {int(numprocess)}"
+        else:
+            _task_screen_log(
+                "Warning: there is no negative number of processes. Setting to 1 (serial).",
+                color="yellow",
+            )
+            base_command += " 1"
+
+    if check_coverage:
+        base_command += " --cov=src/perphil"
+
+    if generate_report:
+        base_command += " --junitxml=pytest.xml"
+        if not check_coverage:
+            base_command += " --cov=src/perphil"
+
+    if generate_cov_xml:
+        base_command += " --cov-report xml:coverage.xml"
+
+    if generate_report or generate_cov_xml:
+        base_command += " --cov-report=term-missing:skip-covered"
+
+    if record_output:
+        base_command += " | tee pytest-coverage.txt"
+
+    host_system = _HOST_SYSTEM
+    if host_system not in _SUPPORTED_SYSTEMS:
+        raise exceptions.Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
+    pty_flag = True if host_system != "Windows" else False
+    _task_screen_log(f"Running: {base_command}", color="yellow", bold=False)
+    ctx.run(base_command, pty=pty_flag)
+
+
+@task(
+    help={
+        "verbose": "Run pytest in verbose mode",
+        "color": "Colorize pytest output",
+        "check_coverage": "Display coverage summary table after running the tests",
+        "generate_report": "Generate pytest report and save it as a xml file (named pytest.xml)",
+        "generate_cov_xml": "Generate coverage report and save it as a xml file (named coverage.xml)",
+        "cov_append": "Append coverage output to existing coverage file",
+    },
+)
+def tests_ipynb(
+    ctx,
+    verbose=True,
+    color=True,
+    check_coverage=False,
+    generate_cov_xml=False,
+    generate_report=False,
+    cov_append=False,
+):
+    """
+    Placeholder for notebook tests. No notebooks are marked as supported in this repo; runs a no-op unless enabled.
+    """
+    task_output_message = "Running notebooks as tests (noop)"
+    _task_screen_log(task_output_message)
+
+    base_command = "pytest -ra -q"
+    if verbose:
+        base_command += " -v"
+    if color:
+        base_command += " --color=yes"
+    if check_coverage:
+        base_command += " --cov=src/perphil"
+    if generate_report:
+        base_command += " --junitxml=pytest-ipynb.xml"
+        if not check_coverage:
+            base_command += " --cov=src/perphil"
+    if generate_cov_xml:
+        # append to main coverage if requested
+        base_command += " --cov-report xml:coverage.xml"
+    if generate_report or generate_cov_xml:
+        base_command += " --cov-report=term-missing:skip-covered"
+    if cov_append:
+        base_command += " --cov-append"
+
+    host_system = _HOST_SYSTEM
+    if host_system not in _SUPPORTED_SYSTEMS:
+        raise exceptions.Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
+    pty_flag = True if host_system != "Windows" else False
+    _task_screen_log(f"Running: {base_command}", color="yellow", bold=False)
+    ctx.run(base_command, pty=pty_flag)
+
+
+@task
+def diff_coverage(ctx):
+    """
+    Run diff-cover to verify if all new/changed lines are covered. Needs coverage.xml present.
+    """
+    task_output_message = "Check if diff code is covered"
+    _task_screen_log(task_output_message)
+
+    base_command = "diff-cover coverage.xml --config-file pyproject.toml"
+    _task_screen_log(f"Running: {base_command}", color="yellow", bold=False)
+
+    host_system = _HOST_SYSTEM
+    if host_system not in _SUPPORTED_SYSTEMS:
+        raise exceptions.Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
+    pty_flag = True if host_system != "Windows" else False
+    ctx.run(base_command, pty=pty_flag)
+
+
+@task(
+    help={
+        "color": "Display output with colors",
+        "pretty": "Enable better and colorful mypy output",
+        "verbose": "Run mypy in verbose mode",
+        "files": "Files to be checked with mypy",
+    }
+)
+def type_check(ctx, pretty=False, verbose=False, color=True, files=""):
+    """
+    Run mypy on perphil to check for typing issues.
+    """
+    task_output_message = "Running typing check on perphil"
+    _task_screen_log(task_output_message)
+
+    base_command = "mypy"
+    if pretty:
+        base_command += " --pretty"
+    if verbose:
+        base_command += " --verbose"
+    if color:
+        base_command += " --color-output"
+    if files != "":
+        base_command += f" {files}"
+
+    host_system = _HOST_SYSTEM
+    if host_system not in _SUPPORTED_SYSTEMS:
+        raise exceptions.Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
+    pty_flag = True if host_system != "Windows" else False
+    _task_screen_log(f"Running: {base_command}", color="yellow", bold=False)
+    ctx.run(base_command, pty=pty_flag)
+
+
+@task(
+    help={
         "dry": "Show what would be removed without actually deleting",
     }
 )
