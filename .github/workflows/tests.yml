@@ -45,13 +45,9 @@ jobs:
           sudo apt-get install -y ccache
           echo "/usr/lib/ccache" >> $GITHUB_PATH
 
-      - name: Determine Firedrake latest tag
-        id: firedrake
-        run: |
-          TAG=$(curl -s https://api.github.com/repos/firedrakeproject/firedrake/releases/latest | grep -E '"tag_name"' | cut -d '"' -f 4)
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
       - name: Download firedrake-configure (for PETSc version discovery)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           inv download-firedrake-configure
 
@@ -91,7 +87,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .venv
-          key: ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-${{ steps.firedrake.outputs.tag }}-${{ steps.petsc.outputs.version }}-${{ steps.petsc-cfg.outputs.hash }}-${{ hashFiles('pyproject.toml', 'tasks.py') }}
+          key: ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-${{ steps.petsc.outputs.version }}-${{ steps.petsc-cfg.outputs.hash }}-${{ hashFiles('pyproject.toml', 'tasks.py') }}
 
       - name: Install core system packages for Firedrake/PETSc
         run: |
