@@ -18,7 +18,7 @@ class DPPParameters:
 
     :param mu:
         Viscosity parameter.
-        
+
     :param eta:
         Permeability constrast parameter (computed from k1 and k2 only).
     """
@@ -40,7 +40,7 @@ class DPPParameters:
             self.beta = fd.Constant(self.beta)
         if not isinstance(self.mu, fd.Constant):
             self.mu = fd.Constant(self.mu)
-        
+
     @property
     def eta(self) -> fd.Constant:
         """
