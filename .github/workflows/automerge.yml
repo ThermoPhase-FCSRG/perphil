@@ -1,0 +1,25 @@
+name: Automerge PR
+
+on:
+  pull_request:
+    types: [labeled, synchronize, opened]
+    branches:
+      - main
+
+jobs:
+  automerge:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    if: contains(github.event.pull_request.labels.*.name, 'automerge')
+
+    steps:
+      - name: Wait for all status checks to pass
+        uses: pascalgn/automerge-action@v0.16.4
+        env:
+            GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+            MERGE_METHOD: "squash"
+            MERGE_REQUIRED_APPROVALS: "0"
+            MERGE_RETRY_SLEEP: "60000"
+            MERGE_RETRIES: "10"

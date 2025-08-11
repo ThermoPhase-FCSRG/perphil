@@ -1,0 +1,52 @@
+name: Pre-commit auto-update
+
+on:
+  schedule:
+    - cron: "0 1 * * 1"
+  workflow_dispatch:
+
+jobs:
+  auto-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+
+      - name: Display Python version
+        run: python -c "import sys; print(sys.version)"
+
+      - name: Create temp .venv
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+
+      - name: Install dependencies in dev mode
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Update pre-commit
+        run: |
+          pre-commit autoupdate
+
+      - name: Create the PR pushing the changes
+        uses: peter-evans/create-pull-request@271a8d0340265f705b14b6d32b9829c1cb33d45e
+        if: always()
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: update-pre-commit-hooks
+          title: Update pre-commit hooks
+          commit-message: "GHA: update pre-commit hooks"
+          body: Update versions of pre-commit hooks to latest version.
+          committer: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+          author: ${{ github.actor }} <${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com>
+          reviewers: volpatto

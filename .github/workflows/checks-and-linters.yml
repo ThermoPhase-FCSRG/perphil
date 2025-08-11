@@ -1,0 +1,121 @@
+name: Checks and Linters
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hooks:
+    name: Run hooks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: x64
+
+      - name: Display Python version
+        run: python -c "import sys; print(sys.version)"
+
+      - name: Install dev dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run pre-commit hooks (all files)
+        run: inv run-hooks --all-files
+
+  mypy:
+    name: Run mypy on diff
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+      checks: write
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: x64
+
+      - name: Display Python version
+        run: python -c "import sys; print(sys.version)"
+
+      - name: Get diff files (.py only inside perphil)
+        id: diff
+        run: |
+          CHANGED_FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} -- src/perphil | grep '\\.py$' || true)
+          CHANGED_FILES=$(echo "$CHANGED_FILES" | tr '\n' ' ' | sed 's/ *$//')
+          echo "changed=$CHANGED_FILES" >> $GITHUB_OUTPUT
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No changed Python files under src/perphil; skipping mypy." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Annotate mypy issues in PR
+        if: steps.diff.outputs.changed != ''
+        uses: tsuyoshicho/action-mypy@v5
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-pr-review
+          level: warning
+          target: ${{ steps.diff.outputs.changed }}
+          setup_method: install
+          setup_command: 'pip install mypy'
+          filter_mode: added
+          install_types: false
+
+  typos:
+    name: Check for Typos
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+      checks: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Get diff files (src/perphil + README.md)
+        id: diff
+        run: |
+          CHANGED=$(git diff --name-only ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} -- src/perphil README.md || true)
+          CHANGED=$(echo "$CHANGED" | tr '\n' ' ' | sed 's/ *$//')
+          echo "changed=$CHANGED" >> $GITHUB_OUTPUT
+
+      - uses: Shemnei/reviewdog-action-typos@main
+        if: steps.diff.outputs.changed != ''
+        with:
+          reporter: github-pr-review
+          level: warning
+          filter_mode: added
+          files: ${{ steps.diff.outputs.changed }}
+          locale: en
