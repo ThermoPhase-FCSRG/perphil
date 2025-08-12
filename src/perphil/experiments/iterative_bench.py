@@ -291,7 +291,7 @@ def estimate_condition_numbers(
     W: fd.MixedFunctionSpace,
     params: Optional[DPPParameters] = None,
     bcs: Optional[List[fd.DirichletBC]] = None,
-    num_of_factors: int = 50,
+    num_of_factors: Optional[int] = 50,
     use_sparse: bool = True,
 ) -> Dict[str, float]:
     """
@@ -304,7 +304,8 @@ def estimate_condition_numbers(
     :param bcs:
         Optional list of DirichletBC boundary conditions.
     :param num_of_factors:
-        Number of Lanczos iterations to use for estimation.
+        Number of singular values to compute when using sparse SVD.
+        If None or <= 0, compute the full dense SVD per target matrix (i.e., use its DoFs).
     :param use_sparse:
         Whether to use sparse methods for condition number calculation.
     :return:
