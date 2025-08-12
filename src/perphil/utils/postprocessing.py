@@ -1,6 +1,7 @@
 from typing import Tuple, Optional
 import numpy as np
 import firedrake as fd
+from typing import Any
 
 
 def split_dpp_solution(dpp_solution: fd.Function) -> Tuple[fd.Function, fd.Function]:
@@ -84,3 +85,41 @@ def slice_along_x(scalar_field: fd.Function, x_value: float) -> Tuple[np.ndarray
 
     values = np.array([scalar_field.at((x_value, y)) for y in y_points])
     return y_points, values
+
+
+def l2_error(numerical: fd.Function, exact_expr: Any) -> float:
+    """
+    Compute the L2 norm of the error ||numerical - exact||_{L2} on the mesh.
+
+    :param numerical:
+        Scalar Function on a CG space.
+
+    :param exact_expr:
+        UFL expression or Function representing the exact solution.
+
+    :return:
+        L2 error as a Python float.
+    """
+    mesh = numerical.function_space().mesh()
+    diff = numerical - exact_expr
+    err_sq = fd.assemble(fd.inner(diff, diff) * fd.dx(domain=mesh))
+    return float(err_sq**0.5)
+
+
+def h1_seminorm_error(numerical: fd.Function, exact_expr: Any) -> float:
+    """
+    Compute the H1 seminorm of the error |numerical - exact|_{H1} on the mesh.
+
+    :param numerical:
+        Scalar Function on a CG space.
+
+    :param exact_expr:
+        UFL expression or Function representing the exact solution.
+
+    :return:
+        H1-seminorm error as a Python float.
+    """
+    mesh = numerical.function_space().mesh()
+    grad_diff = fd.grad(numerical) - fd.grad(exact_expr)
+    err_sq = fd.assemble(fd.inner(grad_diff, grad_diff) * fd.dx(domain=mesh))
+    return float(err_sq**0.5)
