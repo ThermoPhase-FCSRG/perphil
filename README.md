@@ -26,7 +26,7 @@ This repo ships Invoke tasks to set up PETSc/Firedrake and Python deps in a loca
 1. Create a virtual environment and dev tools
    - Creates `.venv` and installs Python dev dependencies from `pyproject.toml`.
 2. Build PETSc matched to Firedrake’s configure
-3. Install Firedrake against that PETSC
+3. Install Firedrake against that PETSc
 
 Run these tasks from the repo root in order (Linux/macOS):
 
