@@ -291,7 +291,7 @@ def estimate_condition_numbers(
     W: fd.MixedFunctionSpace,
     params: Optional[DPPParameters] = None,
     bcs: Optional[List[fd.DirichletBC]] = None,
-    num_of_factors: int = 50,
+    num_of_factors: Optional[int] = 50,
     use_sparse: bool = True,
 ) -> Dict[str, float]:
     """
@@ -304,7 +304,8 @@ def estimate_condition_numbers(
     :param bcs:
         Optional list of DirichletBC boundary conditions.
     :param num_of_factors:
-        Number of Lanczos iterations to use for estimation.
+        Number of singular values to compute when using sparse SVD.
+        If None or <= 0, compute the full dense SVD per target matrix (i.e., use its DoFs).
     :param use_sparse:
         Whether to use sparse methods for condition number calculation.
     :return:
@@ -315,7 +316,7 @@ def estimate_condition_numbers(
 
     # Monolithic cond(A)
     cond_full = conditioning.calculate_condition_number(
-        csr, num_of_factors=num_of_factors, use_sparse=use_sparse
+        csr, num_singular_values=num_of_factors, use_sparse=use_sparse
     )
 
     # Extract diagonal blocks
@@ -327,10 +328,10 @@ def estimate_condition_numbers(
     A11 = A11.tocsr() if sp.issparse(A11) else sp.csr_matrix(A11)
 
     cond_00 = conditioning.calculate_condition_number(
-        A00, num_of_factors=num_of_factors, use_sparse=use_sparse
+        A00, num_singular_values=num_of_factors, use_sparse=use_sparse
     )
     cond_11 = conditioning.calculate_condition_number(
-        A11, num_of_factors=num_of_factors, use_sparse=use_sparse
+        A11, num_singular_values=num_of_factors, use_sparse=use_sparse
     )
 
     return {"monolithic": cond_full, "macro": cond_00, "micro": cond_11}

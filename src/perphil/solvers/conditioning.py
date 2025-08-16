@@ -1,10 +1,12 @@
 import firedrake as fd
 import numpy as np
-from petsc4py import PETSc
 import attr
 from scipy.sparse import csr_matrix
-from scipy.sparse.linalg import svds
+from scipy.sparse.linalg import svds, eigsh
 from scipy.linalg import svd
+
+
+DEFAULT_CONDITION_NUMBER_TOLERANCE = 1e-7
 
 
 @attr.define(frozen=True)
@@ -38,7 +40,7 @@ class MatrixData:
     """
 
     assembled_matrix: fd.Matrix
-    petsc_matrix: PETSc.Mat
+    petsc_matrix: fd.PETSc.Mat
     is_symmetric: bool
     sparse_csr_data: csr_matrix
     number_of_nonzero_entries: int
@@ -102,20 +104,26 @@ def get_matrix_data_from_form(
 
 def calculate_condition_number(
     scipy_csr_sparse_matrix: csr_matrix,
-    num_of_factors: int,
+    num_singular_values: int | None,
     use_sparse: bool = False,
-    zero_tol: float = 1e-5,
+    zero_tol: float = DEFAULT_CONDITION_NUMBER_TOLERANCE,
 ) -> float | np.float64:
     """
     Computes the condition number of a matrix using its singular values.
 
     Depending on the 'use_sparse' flag, this function either computes the singular values using a sparse or dense method.
-    The condition number is defined as the ratio of the largest to the smallest singular value above a given zero tolerance.
+    In sparse mode, it computes the largest and smallest singular values using iterative methods (no need for full spectrum),
+    which is scalable and accurate. The condition number is defined as the ratio of the largest to the smallest singular
+    value above a given zero tolerance.
 
     :param scipy_csr_sparse_matrix: The matrix in SciPy CSR sparse format for which to compute the condition number.
     :type scipy_csr_sparse_matrix: csr_matrix
-    :param num_of_factors: Number of singular values to compute (used only if use_sparse is True).
-    :type num_of_factors: int
+    :param num_of_factors:
+        Number of singular values to compute (used only if use_sparse is True).
+        If None or <= 0, compute the full dense SVD (recommended when you want to
+        use all DoFs of the target matrix). If the requested number is >= min(A.shape)-1,
+        this function will also fall back to dense SVD for robustness and accuracy.
+    :type num_of_factors: int | None
     :param use_sparse: Whether to use sparse SVD computation (svds) or dense SVD (svd), defaults to False.
     :type use_sparse: bool, optional
     :param zero_tol: Tolerance below which singular values are ignored, defaults to 1e-5.
@@ -123,19 +131,88 @@ def calculate_condition_number(
     :return: The computed condition number of the matrix.
     :rtype: float | np.float64
     """
-    if use_sparse:
-        singular_values = svds(
-            A=scipy_csr_sparse_matrix,
-            k=num_of_factors,
-            which="LM",
-            maxiter=5000,
-            return_singular_vectors=False,
-            solver="lobpcg",
-        )
-    else:
-        M = scipy_csr_sparse_matrix.toarray()
-        singular_values = svd(M, compute_uv=False, check_finite=False)
+    nrows, ncols = scipy_csr_sparse_matrix.shape
+    nmin = min(nrows, ncols)
 
-    singular_values = singular_values[singular_values > zero_tol]
-    condition_number = singular_values.max() / singular_values.min()
-    return float(condition_number)
+    # Guard against degenerate shapes
+    if nmin == 0:
+        return float("nan")
+
+    # If full spectrum requested or dense mode, compute dense SVD directly
+    if (
+        (not use_sparse)
+        or (num_singular_values is None)
+        or (num_singular_values <= 0)
+        or (int(num_singular_values) >= nmin - 1)
+    ):
+        M = scipy_csr_sparse_matrix.toarray()
+        svals = svd(M, compute_uv=False, check_finite=False)
+        svals = np.asarray(svals)
+        svals = svals[svals > zero_tol]
+        if svals.size == 0:
+            return float("inf")
+        return float(svals.max() / svals.min())
+
+    if use_sparse:
+        # For accurate condition numbers we only need the extreme singular values.
+        # Compute largest singular value (||A||2) using svds with which='LM'.
+        try:
+            smax_arr = svds(
+                A=scipy_csr_sparse_matrix,
+                k=1,
+                which="LM",
+                maxiter=10000,
+                return_singular_vectors=False,
+                solver="arpack",
+            )
+            smax = float(np.max(smax_arr))
+        except Exception:
+            # Dense fallback for robustness
+            M = scipy_csr_sparse_matrix.toarray()
+            svals = svd(M, compute_uv=False, check_finite=False)
+            smax = float(np.max(svals)) if svals.size else float("nan")
+
+        # Compute smallest singular value using svds with which='SM' (ARPACK),
+        # falling back to eigsh on A^T A if needed.
+        smin: float | None = None
+        try:
+            smin_arr = svds(
+                A=scipy_csr_sparse_matrix,
+                k=1,
+                which="SM",
+                maxiter=20000,
+                return_singular_vectors=False,
+                solver="arpack",
+                tol=1e-8,
+            )
+            smin = float(np.min(smin_arr))
+        except Exception:
+            # Build normal equations A^T A (symmetric PSD) and compute its smallest eigenvalue
+            try:
+                AtA = (scipy_csr_sparse_matrix.T).dot(scipy_csr_sparse_matrix)
+                # Using shift-invert around sigma=0 helps find the smallest eigenvalue
+                evals, _ = eigsh(AtA, k=1, which="SM")
+                lam_min = float(evals[0])
+                smin = float(np.sqrt(max(lam_min, 0.0)))
+            except Exception:
+                # Last resort: dense SVD
+                M = scipy_csr_sparse_matrix.toarray()
+                svals = svd(M, compute_uv=False, check_finite=False)
+                if svals.size:
+                    smin = float(np.min(svals))
+
+        if smin is None or not np.isfinite(smax):
+            return float("nan")
+        # Apply zero tolerance filtering
+        if smin <= zero_tol:
+            return float("inf")
+        return float(smax / smin)
+    else:
+        # This branch is unreachable due to the guard above; kept for clarity.
+        M = scipy_csr_sparse_matrix.toarray()
+        svals = svd(M, compute_uv=False, check_finite=False)
+        svals = np.asarray(svals)
+        svals = svals[svals > zero_tol]
+        if svals.size == 0:
+            return float("inf")
+        return float(svals.max() / svals.min())
