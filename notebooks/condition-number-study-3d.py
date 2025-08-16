@@ -63,7 +63,7 @@ print(
 # Sweep: assemble 3D DPP monolithic matrix and compute condition numbers
 rows = []
 for N in Ns:
-    mesh = fd.UnitCubeMesh(N, N, N)
+    mesh = fd.UnitCubeMesh(N, N, N, hexahedral=True)
     # Build scalar pressure space and form mixed space W=V×V
     _, V = create_function_spaces(
         mesh, pressure_deg=pressure_degree, pressure_family="CG"
