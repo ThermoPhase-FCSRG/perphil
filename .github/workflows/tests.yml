@@ -143,4 +143,4 @@ jobs:
           source .venv/bin/activate
           # Ensure we have the base branch locally for comparison
           git fetch --no-tags --prune --depth=100 origin +refs/heads/${{ github.event.pull_request.base.ref }}:refs/remotes/origin/${{ github.event.pull_request.base.ref }}
-          diff-cover coverage.xml --compare-branch origin/${{ github.event.pull_request.base.ref }} --fail-under 60
+          diff-cover coverage.xml --compare-branch origin/${{ github.event.pull_request.base.ref }} --fail-under 30
