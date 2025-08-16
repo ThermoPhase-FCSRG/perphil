@@ -8,6 +8,9 @@ on:
 
   workflow_dispatch:  # Allow manual triggering of the workflow
 
+  schedule:
+    - cron: "0 2 * * 1"
+
 permissions:
   contents: write
   pull-requests: write
