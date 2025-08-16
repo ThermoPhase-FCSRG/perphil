@@ -4,7 +4,6 @@ import attr
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import svds, eigsh
 from scipy.linalg import svd
-from typing import Any
 
 
 DEFAULT_CONDITION_NUMBER_TOLERANCE = 1e-7

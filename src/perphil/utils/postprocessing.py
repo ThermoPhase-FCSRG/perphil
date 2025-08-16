@@ -1,6 +1,3 @@
-from typing import Tuple, Optional
-import numpy as np
-import firedrake as fd
 from typing import Tuple, Optional, Any
 import numpy as np
 import firedrake as fd
