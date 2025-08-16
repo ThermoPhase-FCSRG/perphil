@@ -7,6 +7,9 @@ from scipy.linalg import svd
 from typing import Any
 
 
+DEFAULT_CONDITION_NUMBER_TOLERANCE = 1e-7
+
+
 @attr.define(frozen=True)
 class MatrixData:
     """
@@ -102,9 +105,9 @@ def get_matrix_data_from_form(
 
 def calculate_condition_number(
     scipy_csr_sparse_matrix: csr_matrix,
-    num_of_factors: int | None,
+    num_singular_values: int | None,
     use_sparse: bool = False,
-    zero_tol: float = 1e-7,
+    zero_tol: float = DEFAULT_CONDITION_NUMBER_TOLERANCE,
 ) -> float | np.float64:
     """
     Computes the condition number of a matrix using its singular values.
@@ -139,9 +142,9 @@ def calculate_condition_number(
     # If full spectrum requested or dense mode, compute dense SVD directly
     if (
         (not use_sparse)
-        or (num_of_factors is None)
-        or (num_of_factors <= 0)
-        or (int(num_of_factors) >= nmin - 1)
+        or (num_singular_values is None)
+        or (num_singular_values <= 0)
+        or (int(num_singular_values) >= nmin - 1)
     ):
         M = scipy_csr_sparse_matrix.toarray()
         svals = svd(M, compute_uv=False, check_finite=False)

@@ -88,15 +88,15 @@ for N in Ns:
 
     # Compute condition numbers using robust routine (dense when num_of_factors=0)
     cond_A = calculate_condition_number(
-        csr, num_of_factors=num_of_factors, use_sparse=use_sparse
+        csr, num_singular_values=num_of_factors, use_sparse=use_sparse
     )
     A00 = csr[:n0, :n0].tocsr()
     A11 = csr[n0 : n0 + n1, n0 : n0 + n1].tocsr()
     cond_A00 = calculate_condition_number(
-        A00, num_of_factors=num_of_factors, use_sparse=use_sparse
+        A00, num_singular_values=num_of_factors, use_sparse=use_sparse
     )
     cond_A11 = calculate_condition_number(
-        A11, num_of_factors=num_of_factors, use_sparse=use_sparse
+        A11, num_singular_values=num_of_factors, use_sparse=use_sparse
     )
 
     # Mesh size h for UnitCube with linear elements (approx 1/N)

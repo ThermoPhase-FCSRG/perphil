@@ -316,7 +316,7 @@ def estimate_condition_numbers(
 
     # Monolithic cond(A)
     cond_full = conditioning.calculate_condition_number(
-        csr, num_of_factors=num_of_factors, use_sparse=use_sparse
+        csr, num_singular_values=num_of_factors, use_sparse=use_sparse
     )
 
     # Extract diagonal blocks
@@ -328,10 +328,10 @@ def estimate_condition_numbers(
     A11 = A11.tocsr() if sp.issparse(A11) else sp.csr_matrix(A11)
 
     cond_00 = conditioning.calculate_condition_number(
-        A00, num_of_factors=num_of_factors, use_sparse=use_sparse
+        A00, num_singular_values=num_of_factors, use_sparse=use_sparse
     )
     cond_11 = conditioning.calculate_condition_number(
-        A11, num_of_factors=num_of_factors, use_sparse=use_sparse
+        A11, num_singular_values=num_of_factors, use_sparse=use_sparse
     )
 
     return {"monolithic": cond_full, "macro": cond_00, "micro": cond_11}

@@ -47,8 +47,8 @@ def test_calculate_condition_number_dense_and_sparse():
     from perphil.solvers.conditioning import calculate_condition_number
 
     csr = _small_csr()
-    cond_dense = calculate_condition_number(csr, num_of_factors=1, use_sparse=False)
-    cond_sparse = calculate_condition_number(csr, num_of_factors=1, use_sparse=True)
+    cond_dense = calculate_condition_number(csr, num_singular_values=1, use_sparse=False)
+    cond_sparse = calculate_condition_number(csr, num_singular_values=1, use_sparse=True)
     # Methods differ on very small matrices; assert same order of magnitude
     assert cond_dense == pytest.approx(cond_sparse, rel=1e-2, abs=1e-9) or (
         abs(np.log10(cond_dense) - np.log10(cond_sparse)) < 0.5
