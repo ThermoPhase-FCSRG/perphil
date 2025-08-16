@@ -34,18 +34,18 @@ Run these tasks from the repo root in order (Linux/macOS):
 # 1) Create .venv and install dev deps
 python3 -m venv .venv
 source .venv/bin/activate
-inv install_deps
+inv install-deps
 
 # 2) Prepare system prerequisites (MPI, compilers, etc.)
-inv download_firedrake_configure
-inv install_system_packages  # apt (Ubuntu) or brew (macOS)
+inv download-firedrake-configure
+inv install-system-packages  # apt (Ubuntu) or brew (macOS)
 
 # 3) Build PETSc and install Firedrake (order matters)
-inv install_petsc
-inv install_firedrake
+inv install-petsc
+inv install-firedrake
 
 # 4) Editable install of perphil
-inv dev_install
+inv dev-install
 ```
 
 Notes
