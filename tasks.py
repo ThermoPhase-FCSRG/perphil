@@ -151,7 +151,8 @@ def install_system_packages(c):
 
     base_pkgs = result.stdout.strip().split()
     if system == "Linux":
-        all_pkgs = base_pkgs + ["libopenmpi-dev", "openmpi-bin"]
+        # Ensure Fortran compiler is available for MPI Fortran support
+        all_pkgs = base_pkgs + ["libopenmpi-dev", "openmpi-bin", "gfortran"]
 
         missing = []
         for pkg in all_pkgs:
@@ -268,7 +269,8 @@ def install_petsc(c):
     print("Configuring PETSc …")
     with c.cd(petsc_dir):
         # Join configure flags into a single invocation and pass CC/CXX explicitly
-        cfg_joined = " ".join(shlex.quote(f) for f in cfg_flags)
+        # Join flags without additional shell quoting so each option is parsed correctly
+        cfg_joined = " ".join(cfg_flags)
         cc = os.environ.get("CC", "").strip()
         cxx = os.environ.get("CXX", "").strip()
         cc_arg = f" CC={shlex.quote(cc)}" if cc else ""
