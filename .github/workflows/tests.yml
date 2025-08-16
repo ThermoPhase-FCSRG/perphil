@@ -122,13 +122,6 @@ jobs:
           python -m pip install -e '.[dev]'
           pytest --cov=src/perphil --cov-report=xml --cov-report=term-missing
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
-        with:
-          files: coverage.xml
-          flags: unittests
-          fail_ci_if_error: true
-
       - name: Upload coverage artifact
         if: always()
         uses: actions/upload-artifact@v4
