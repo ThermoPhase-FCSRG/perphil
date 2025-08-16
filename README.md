@@ -2,7 +2,6 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Tests and Coverage](https://github.com/volpatto/perphil/actions/workflows/tests.yml/badge.svg)](https://github.com/volpatto/perphil/actions/workflows/tests.yml)
-[![Codecov](https://codecov.io/gh/volpatto/perphil/branch/main/graph/badge.svg)](https://codecov.io/gh/volpatto/perphil)
 
 Double porosity/permeability (DPP) flows with conforming FEM on Firedrake, plus solver experiments, conditioning studies, and PETSc profiling.
 
