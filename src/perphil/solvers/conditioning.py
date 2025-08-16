@@ -41,7 +41,7 @@ class MatrixData:
     """
 
     assembled_matrix: fd.Matrix
-    petsc_matrix: Any
+    petsc_matrix: fd.PETSc.Mat
     is_symmetric: bool
     sparse_csr_data: csr_matrix
     number_of_nonzero_entries: int

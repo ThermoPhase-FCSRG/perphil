@@ -1,7 +1,9 @@
 from typing import Tuple, Optional
 import numpy as np
 import firedrake as fd
-from typing import Any
+from typing import Tuple, Optional, Any
+import numpy as np
+import firedrake as fd
 
 
 def split_dpp_solution(dpp_solution: fd.Function) -> Tuple[fd.Function, fd.Function]:
