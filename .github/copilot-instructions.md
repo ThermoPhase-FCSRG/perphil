@@ -55,3 +55,12 @@ Purpose: help an AI be productive immediately in this Firedrake-based FEM codeba
 - Dev install: `inv dev_install` (editable `perphil`).
 - Pre-commit hooks: `inv hooks` then `inv run_hooks --all-files` (config in `.pre-commit-config.yaml`).
 - Notebooks ↔ scripts pairing: `inv pair_ipynbs` (percent format governed by `jupytext.toml`).
+
+### CI & GitHub Actions
+- Workflow file: `.github/workflows/tests.yml` automates build, test, and coverage on `push` and `pull_request`.
+  - Caches:
+    - PETSc build: directory `petsc-<version>` keyed by a hash of configure flags from `firedrake-configure --show-petsc-configure-options`.
+    - Python virtualenv (`.venv`) and `pip` cache.
+    - `~/.ccache` store for fast recompilation.
+  - CI environment sets `CC="ccache mpicc"` and `CXX="ccache mpicxx"`; `tasks.py` strips the `ccache ` prefix before calling PETSc `./configure`, ensuring the raw MPI compilers are used (avoiding "Ignoring environment variable" warnings).
+  - After setup, tests run with `pytest --cov=src/perphil --cov-report=xml --cov-report=term-missing`, coverage is uploaded as `coverage.xml`, and `diff-cover` enforces PR coverage thresholds.
