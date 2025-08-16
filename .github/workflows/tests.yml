@@ -8,6 +8,10 @@ on:
 
   workflow_dispatch:  # Allow manual triggering of the workflow
 
+  schedule:
+    # Run weekly on Mondays at 2 AM UTC to catch any issues with dependencies or external changes
+    - cron: "0 2 * * 1"
+
 permissions:
   contents: write
   pull-requests: write
@@ -134,10 +138,11 @@ jobs:
           ANNOTATION_TYPE: error
 
       - name: Coverage default-branch data (badge/dashboard)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main'
         uses: py-cov-action/python-coverage-comment-action@v3
         with:
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COVERAGE_DATA_BRANCH: python-coverage-comment-action-data
 
       - name: Check diff coverage
         if: github.event_name == 'pull_request'

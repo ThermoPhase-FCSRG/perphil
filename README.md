@@ -1,6 +1,7 @@
 # perphil
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Tests and Coverage](https://github.com/volpatto/perphil/actions/workflows/tests.yml/badge.svg)](https://github.com/volpatto/perphil/actions/workflows/tests.yml)
 
 Double porosity/permeability (DPP) flows with conforming FEM on Firedrake, plus solver experiments, conditioning studies, and PETSc profiling.
 
@@ -21,10 +22,10 @@ Double porosity/permeability (DPP) flows with conforming FEM on Firedrake, plus 
 
 This repo ships Invoke tasks to set up PETSc/Firedrake and Python deps in a local virtual environment.
 
-1) Create a virtual environment and dev tools
-	- Creates .venv and installs Python dev dependencies from pyproject.toml.
-2) Build PETSc matched to Firedrake’s configure
-3) Install Firedrake against that PETSc
+1. Create a virtual environment and dev tools
+   - Creates `.venv` and installs Python dev dependencies from `pyproject.toml`.
+2. Build PETSc matched to Firedrake’s configure
+3. Install Firedrake against that PETSc
 
 Run these tasks from the repo root in order (Linux/macOS):
 
