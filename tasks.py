@@ -268,19 +268,27 @@ def install_petsc(c):
 
     print("Configuring PETSc …")
     with c.cd(petsc_dir):
-        # Join configure flags into a single invocation and pass CC/CXX explicitly
-        # Join flags without additional shell quoting so each option is parsed correctly
+        # Join configure flags into a single invocation
         cfg_joined = " ".join(cfg_flags)
-        cc = os.environ.get("CC", "").strip()
-        cxx = os.environ.get("CXX", "").strip()
-        cc_arg = f" CC={shlex.quote(cc)}" if cc else ""
-        cxx_arg = f" CXX={shlex.quote(cxx)}" if cxx else ""
-        cmd = f"{prefix_down} ./configure {cfg_joined}{cc_arg}{cxx_arg}"
+        # Determine compilers from environment and strip any ccache prefix
+        raw_cc = os.environ.get("CC", "mpicc").strip()
+        cc = raw_cc.split(" ", 1)[-1] if " " in raw_cc else raw_cc
+        raw_cxx = os.environ.get("CXX", "mpicxx").strip()
+        cxx = raw_cxx.split(" ", 1)[-1] if " " in raw_cxx else raw_cxx
+        # Ensure Fortran MPI compiler (mpif90) is available
+        raw_fc = os.environ.get("FC", "mpif90").strip()
+        fc = raw_fc.split(" ", 1)[-1] if " " in raw_fc else raw_fc
+        # Export compilers into environment to avoid CLI env var warnings
+        os.environ["CC"] = cc
+        os.environ["CXX"] = cxx
+        os.environ["FC"] = fc
+        # Build configure command
+        cmd = f"{prefix_down} ./configure {cfg_joined}"
         c.run(cmd, echo=True, pty=True)
-
+        # Build PETSc
         print("Building PETSc (this may take a long time) …")
         c.run(f"make PETSC_DIR={abs_petsc} PETSC_ARCH={arch} all", echo=True)
-
+        # Check PETSc installation
         print("Checking PETSc installation…")
         try:
             c.run(f"make PETSC_DIR={abs_petsc} PETSC_ARCH={arch} check", echo=True)
