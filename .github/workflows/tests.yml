@@ -138,7 +138,7 @@ jobs:
           ANNOTATION_TYPE: error
 
       - name: Coverage default-branch data (badge/dashboard)
-        if: github.ref == 'refs/heads/main'
+        if: (github.ref == 'refs/heads/main') && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_run')
         uses: py-cov-action/python-coverage-comment-action@v3
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
