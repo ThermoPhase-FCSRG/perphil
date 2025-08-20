@@ -50,7 +50,7 @@ inv dev-install
 
 Notes
 
-- Step order 3→4 is required: install_firedrake expects PETSC_DIR/ARCH exported by install_petsc.
+- Step order 3 -> 4 is required: `install-firedrake` expects PETSC_DIR/ARCH exported by `install-petsc`.
 - A constraints.txt is used to keep some build-time pins (e.g., Cython).
 - You can validate Firedrake with: `firedrake-check`.
 
