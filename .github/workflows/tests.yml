@@ -160,7 +160,7 @@ jobs:
           path: coverage.xml
 
       - name: Upload Coverage PR comment
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && runner.os == 'Linux' && matrix.python-version == '3.12'
         uses: py-cov-action/python-coverage-comment-action@v3
         with:
           GITHUB_TOKEN: ${{ github.token }}
@@ -168,14 +168,14 @@ jobs:
           ANNOTATION_TYPE: error
 
       - name: Coverage default-branch data (badge/dashboard)
-        if: (github.ref == 'refs/heads/main') && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_run')
+        if: (github.ref == 'refs/heads/main') && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_run') && runner.os == 'Linux' && matrix.python-version == '3.12'
         uses: py-cov-action/python-coverage-comment-action@v3
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COVERAGE_DATA_BRANCH: python-coverage-comment-action-data
 
       - name: Check diff coverage
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && runner.os == 'Linux' && matrix.python-version == '3.12'
         run: |
           source .venv/bin/activate
           # Ensure we have the base branch locally for comparison
