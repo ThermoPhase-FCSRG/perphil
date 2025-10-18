@@ -44,11 +44,11 @@ def _venv_activate_prefix() -> str:
 
 @task(
     help={
-        "python": "Python interpreter to use for the venv (e.g., python3.11). Defaults to 'python3.12'.",
+        "python": "Python interpreter to use for the venv (e.g., python3.12). Defaults to the active interpreter (sys.executable).",
         "force": "Recreate the virtualenv if it already exists.",
     }
 )
-def create_venv(c: Context, python: str = "python3.11", force: bool = False) -> None:
+def create_venv(c: Context, python: str | None = None, force: bool = False) -> None:
     """
     Create a Python 3.10+ virtualenv in ./.venv if it does not already exist.
     """
@@ -61,15 +61,20 @@ def create_venv(c: Context, python: str = "python3.11", force: bool = False) -> 
         _task_screen_log(f"Removing existing virtualenv at '{VENV_DIR}/' …", color="yellow")
         shutil.rmtree(VENV_DIR)
 
+    # Resolve default interpreter if not provided
+    if not python:
+        python = sys.executable or "python"
+
     # Check selected Python interpreter version
     py_ver = c.run(
         f"{python} -c \"import sys; print(str(sys.version_info[0]) + '.' + str(sys.version_info[1]))\"",
         hide=True,
         warn=True,
     )
-    if py_ver.failed:
+    # Guard against a None result and check .failed safely to satisfy type checkers
+    if py_ver is None or getattr(py_ver, "failed", False):
         raise Exit(f"Failed to execute '{python}'. Is it installed and on PATH?")
-    major_minor = (py_ver.stdout or "").strip()
+    major_minor = (getattr(py_ver, "stdout", "") or "").strip()
     try:
         maj, minr = [int(x) for x in major_minor.split(".")[:2]]
     except Exception:
@@ -79,10 +84,34 @@ def create_venv(c: Context, python: str = "python3.11", force: bool = False) -> 
     # Firedrake 2025.10.0 does not provide wheels for some deps (e.g., VTK) on Python >=3.13
     # Recommend using Python 3.11 or 3.12
     if (maj, minr) >= (3, 13):
-        raise Exit(
-            f"Python {maj}.{minr} detected. Firedrake 2025.10.0 currently lacks prebuilt wheels (e.g., VTK) for >=3.13. "
-            "Please create the venv with Python 3.11 or 3.12 (e.g., --python /opt/homebrew/bin/python3.11)."
-        )
+        # Attempt automatic fallback to a supported interpreter
+        candidates = ["python3.12", "python3.11"]
+        for cand in candidates:
+            if shutil.which(cand):
+                _task_screen_log(
+                    f"Python {maj}.{minr} detected. Auto-selecting '{cand}' for the venv to ensure Firedrake wheels.",
+                    color="yellow",
+                )
+                python = cand
+                py_ver = c.run(
+                    f"{python} -c \"import sys; print(str(sys.version_info[0]) + '.' + str(sys.version_info[1]))\"",
+                    hide=True,
+                    warn=True,
+                )
+                if py_ver is None or getattr(py_ver, "failed", False):
+                    continue
+                major_minor = (getattr(py_ver, "stdout", "") or "").strip()
+                try:
+                    maj, minr = [int(x) for x in major_minor.split(".")[:2]]
+                except Exception:
+                    continue
+                if (maj, minr) < (3, 13):
+                    break
+        else:
+            raise Exit(
+                f"Python {maj}.{minr} detected. Firedrake 2025.10.0 currently lacks prebuilt wheels (e.g., VTK) for >=3.13. "
+                "Please create the venv with Python 3.11 or 3.12 (e.g., --python python3.12)."
+            )
 
     _task_screen_log(f"Creating virtualenv in '{VENV_DIR}/' …")
     c.run(f"{python} -m venv {VENV_DIR}", pty=True)
@@ -138,7 +167,7 @@ def download_firedrake_configure(c: Context, ref: str = "", force: bool = False)
             f"firedrakeproject/firedrake/{tag}/scripts/firedrake-configure"
         )
         dl = c.run(f"curl -fsSL {raw_url} -o firedrake-configure", warn=True, echo=True)
-        if not dl.failed and os.path.isfile("firedrake-configure"):
+        if dl is not None and not dl.failed and os.path.isfile("firedrake-configure"):
             c.run("chmod +x firedrake-configure", warn=True)
             _task_screen_log(f"✔ downloaded firedrake-configure@{tag}", color="yellow")
             return True
@@ -160,7 +189,11 @@ def download_firedrake_configure(c: Context, ref: str = "", force: bool = False)
         "| grep -E '\"tag_name\"' | cut -d '\"' -f 4"
     )
     result = c.run(cmd, hide=True, warn=True)
-    latest_tag = (result.stdout or "").strip()
+    # Guard against c.run returning None or a failed result before accessing stdout
+    if result is None or getattr(result, "failed", False):
+        latest_tag = ""
+    else:
+        latest_tag = (getattr(result, "stdout", "") or "").strip()
     if latest_tag and _download_from_ref(latest_tag):
         return
 
@@ -171,7 +204,12 @@ def download_firedrake_configure(c: Context, ref: str = "", force: bool = False)
         "firedrakeproject/firedrake/main/scripts/firedrake-configure"
     )
     dl_fb = c.run(f"curl -fsSL {fallback_url} -o firedrake-configure", warn=True, echo=True)
-    if not dl_fb.failed and os.path.isfile("firedrake-configure"):
+    # c.run may return None in some contexts; check for None and use getattr to safely access .failed
+    if (
+        dl_fb is not None
+        and not getattr(dl_fb, "failed", False)
+        and os.path.isfile("firedrake-configure")
+    ):
         c.run("chmod +x firedrake-configure", warn=True)
         _task_screen_log("✔ downloaded firedrake-configure@main", color="yellow")
         return
@@ -193,7 +231,7 @@ def install_system_packages(c):
     """
     system = platform.system()
     # 1) ask firedrake-configure which packages it wants
-    result = c.run("python3 firedrake-configure --show-system-packages", hide=True, warn=True)
+    result = c.run("python firedrake-configure --show-system-packages", hide=True, warn=True)
     if result.failed:
         raise Exit("Failed to query `firedrake-configure --show-system-packages`")
 
@@ -263,7 +301,7 @@ def install_petsc(c):
 
     print("Determining PETSc version from firedrake-configure …")
     result = c.run(
-        f"{prefix} python3 firedrake-configure --show-petsc-version",
+        f"{prefix} python firedrake-configure --show-petsc-version",
         hide=True,
         warn=True,
         echo=True,
@@ -302,7 +340,7 @@ def install_petsc(c):
     print("Gathering PETSc configure flags …")
     cfg_flags = (
         c.run(
-            f"{prefix} python3 firedrake-configure --show-petsc-configure-options",
+            f"{prefix} python firedrake-configure --show-petsc-configure-options",
             hide=True,
             warn=True,
             echo=True,
@@ -408,7 +446,11 @@ def install_firedrake(c: Context, ref: str = "") -> None:
     res = c.run(cmd_pypi, pty=True, echo=True, warn=True)
 
     # If pinned and PyPI failed, try the GitHub tarball for the tag
-    if res.failed and requested_ref and requested_ref.lower() != "latest":
+    if (
+        (res is None or getattr(res, "failed", False))
+        and requested_ref
+        and requested_ref.lower() != "latest"
+    ):
         tarball_url = (
             "https://github.com/firedrakeproject/firedrake/archive/refs/tags/"
             f"{requested_ref}.tar.gz"
@@ -432,7 +474,7 @@ def install_firedrake(c: Context, ref: str = "") -> None:
         # We use warn=True so this block is rarely executed; be robust here too.
         pass
     res_immut = c.run(f"{prefix} python -c 'import immutabledict'", hide=True, warn=True)
-    if res_immut.failed:
+    if res_immut is None or getattr(res_immut, "failed", False):
         _task_screen_log("Installing missing dependency: immutabledict …", color="yellow")
         c.run(f"{prefix} pip install immutabledict", pty=True, echo=True)
     try:
@@ -474,7 +516,8 @@ def setup_firedrake(
             hide=True,
             warn=True,
         )
-        major_minor = (ver.stdout or "").strip()
+        # c.run may return None in some contexts; use getattr to safely access stdout
+        major_minor = (getattr(ver, "stdout", "") or "").strip()
         maj, minr = [int(x) for x in major_minor.split(".")[:2]]
     except Exception:
         maj, minr = (0, 0)
