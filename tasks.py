@@ -5,7 +5,7 @@ import shlex
 import shutil
 import sys
 import platform
-from invoke import task, exceptions, Exit
+from invoke import task, exceptions, Exit, Context
 from rich import print
 
 _PACKAGE_NAME = "dpp-studies"
@@ -42,23 +42,48 @@ def _venv_activate_prefix() -> str:
     return f"source {VENV_DIR}/bin/activate && "
 
 
-@task
-def create_venv(c):
+@task(help={
+    "python": "Python interpreter to use for the venv (e.g., python3.11). Defaults to 'python3.12'.",
+    "force": "Recreate the virtualenv if it already exists.",
+})
+def create_venv(c: Context, python: str = "python3.11", force: bool = False) -> None:
     """
     Create a Python 3.10+ virtualenv in ./.venv if it does not already exist.
     """
     _platform_sanity_check()
 
     if os.path.isdir(VENV_DIR):
-        print(f"Virtualenv already exists at '{VENV_DIR}/'")
-        return
+        if not force:
+            print(f"Virtualenv already exists at '{VENV_DIR}/'")
+            return
+        _task_screen_log(f"Removing existing virtualenv at '{VENV_DIR}/' …", color="yellow")
+        shutil.rmtree(VENV_DIR)
 
-    ver = sys.version_info
-    if ver < (3, 10):
-        raise Exit(f"Python 3.10+ is required (found {ver[0]}.{ver[1]}).")
+    # Check selected Python interpreter version
+    py_ver = c.run(
+        f"{python} -c \"import sys; print(str(sys.version_info[0]) + '.' + str(sys.version_info[1]))\"",
+        hide=True,
+        warn=True,
+    )
+    if py_ver.failed:
+        raise Exit(f"Failed to execute '{python}'. Is it installed and on PATH?")
+    major_minor = (py_ver.stdout or "").strip()
+    try:
+        maj, minr = [int(x) for x in major_minor.split(".")[:2]]
+    except Exception:
+        raise Exit(f"Could not parse Python version from '{python}': '{major_minor}'")
+    if (maj, minr) < (3, 10):
+        raise Exit(f"Python 3.10+ is required (found {maj}.{minr}) for Firedrake.")
+    # Firedrake 2025.10.0 does not provide wheels for some deps (e.g., VTK) on Python >=3.13
+    # Recommend using Python 3.11 or 3.12
+    if (maj, minr) >= (3, 13):
+        raise Exit(
+            f"Python {maj}.{minr} detected. Firedrake 2025.10.0 currently lacks prebuilt wheels (e.g., VTK) for >=3.13. "
+            "Please create the venv with Python 3.11 or 3.12 (e.g., --python /opt/homebrew/bin/python3.11)."
+        )
 
     _task_screen_log(f"Creating virtualenv in '{VENV_DIR}/' …")
-    c.run(f"python3 -m venv {VENV_DIR}", pty=True)
+    c.run(f"{python} -m venv {VENV_DIR}", pty=True)
     c.run(f"{_venv_activate_prefix()} pip install --upgrade pip setuptools wheel", pty=True)
     _task_screen_log("✔ Virtualenv created.", color="yellow")
 
@@ -73,22 +98,27 @@ def install_deps(c):
     _task_screen_log("✔ Python-level dependencies installed.", color="yellow")
 
 
-@task(pre=[install_deps])
-def download_firedrake_configure(c):
+@task(pre=[install_deps], help={
+    "ref": "Firedrake release tag to pin (e.g., 2025.10.0). Defaults to 'latest' or FIREDRAKE_REF env.",
+    "force": "Redownload even if 'firedrake-configure' already exists.",
+})
+def download_firedrake_configure(c: Context, ref: str = "", force: bool = False) -> None:
     """
     Ensure a usable 'firedrake-configure' script is present in the repo root.
-    Prefer the latest Firedrake release, but fall back gracefully to:
-      1) existing local file (if present), or
-      2) the 'main' branch script from Firedrake (best-effort).
+
+    You can pin a specific Firedrake release by providing --ref=<tag> (e.g., 2025.10.0)
+    or setting FIREDRAKE_REF in the environment. When omitted, we use the latest
+    release, falling back to the 'main' branch script.
     """
-    # 0) If file already exists, keep it (avoid network flakiness in CI)
-    if os.path.isfile("firedrake-configure"):
+    # Detect requested reference (CLI arg takes precedence over env)
+    requested_ref = (ref or os.environ.get("FIREDRAKE_REF", "")).strip()
+
+    # 0) If file already exists and not forcing, keep it (avoid network flakiness in CI)
+    if os.path.isfile("firedrake-configure") and not force:
         _task_screen_log("Found existing firedrake-configure; skipping download.", color="green")
         # Ensure it's executable
         c.run("chmod +x firedrake-configure", warn=True)
         return
-
-    _task_screen_log("Looking up the latest Firedrake release…")
 
     # Build curl headers (GitHub API can be picky/rate-limited)
     gh_token = os.environ.get("GITHUB_TOKEN", "").strip()
@@ -96,27 +126,40 @@ def download_firedrake_configure(c):
     if gh_token:
         headers += f" -H 'Authorization: Bearer {gh_token}' -H 'X-GitHub-Api-Version: 2022-11-28'"
 
-    # 1) Try GitHub API for the latest tag
+    def _download_from_ref(tag: str) -> bool:
+        _task_screen_log(f"Attempting firedrake-configure@{tag} …")
+        raw_url = (
+            "https://raw.githubusercontent.com/"
+            f"firedrakeproject/firedrake/{tag}/scripts/firedrake-configure"
+        )
+        dl = c.run(f"curl -fsSL {raw_url} -o firedrake-configure", warn=True, echo=True)
+        if not dl.failed and os.path.isfile("firedrake-configure"):
+            c.run("chmod +x firedrake-configure", warn=True)
+            _task_screen_log(f"✔ downloaded firedrake-configure@{tag}", color="yellow")
+            return True
+        return False
+
+    # 1) If user requested a specific tag, try that first
+    if requested_ref and requested_ref.lower() != "latest":
+        if _download_from_ref(requested_ref):
+            return
+        raise Exit(
+            f"Failed to download firedrake-configure for tag '{requested_ref}'. "
+            "Please verify the tag exists: https://github.com/firedrakeproject/firedrake/releases"
+        )
+
+    # 2) Otherwise, try GitHub API for the latest tag
+    _task_screen_log("Looking up the latest Firedrake release…")
     cmd = (
         f"curl -s {headers} https://api.github.com/repos/firedrakeproject/firedrake/releases/latest "
         "| grep -E '\"tag_name\"' | cut -d '\"' -f 4"
     )
     result = c.run(cmd, hide=True, warn=True)
-
     latest_tag = (result.stdout or "").strip()
-    if latest_tag:
-        _task_screen_log(f"Latest Firedrake release is '{latest_tag}'", color="green")
-        raw_url = (
-            "https://raw.githubusercontent.com/"
-            f"firedrakeproject/firedrake/{latest_tag}/scripts/firedrake-configure"
-        )
-        dl = c.run(f"curl -fsSL {raw_url} -o firedrake-configure", warn=True, echo=True)
-        if not dl.failed and os.path.isfile("firedrake-configure"):
-            c.run("chmod +x firedrake-configure", warn=True)
-            _task_screen_log(f"✔ downloaded firedrake-configure@{latest_tag}", color="yellow")
-            return
+    if latest_tag and _download_from_ref(latest_tag):
+        return
 
-    # 2) Fallback: try 'main' branch if latest release lookup/download failed
+    # 3) Fallback: try 'main' branch if latest release lookup/download failed
     _task_screen_log("Falling back to firedrake 'main' branch script …", color="yellow")
     fallback_url = (
         "https://raw.githubusercontent.com/"
@@ -128,9 +171,9 @@ def download_firedrake_configure(c):
         _task_screen_log("✔ downloaded firedrake-configure@main", color="yellow")
         return
 
-    # 3) If still nothing, give a clear error with next-step guidance
+    # 4) If still nothing, give a clear error with next-step guidance
     raise Exit(
-        "Failed to obtain firedrake-configure (GitHub API and fallback both failed). "
+        "Failed to obtain firedrake-configure (explicit ref, latest lookup, and fallback all failed). "
         "You can: (a) commit a known-good 'firedrake-configure' to the repo root, or "
         "(b) re-run with network access and a valid GITHUB_TOKEN."
     )
@@ -278,12 +321,18 @@ def install_petsc(c):
         # Ensure Fortran MPI compiler (mpif90) is available
         raw_fc = os.environ.get("FC", "mpif90").strip()
         fc = raw_fc.split(" ", 1)[-1] if " " in raw_fc else raw_fc
+        # On macOS, sometimes mpif90 isn't present; prefer mpifort if available
+        if shutil.which(fc) is None and shutil.which("mpifort") is not None:
+            fc = "mpifort"
         # Export compilers into environment to avoid CLI env var warnings
         os.environ["CC"] = cc
         os.environ["CXX"] = cxx
         os.environ["FC"] = fc
         # Build configure command
-        cmd = f"{prefix_down} ./configure {cfg_joined}"
+        # IMPORTANT: Ensure PETSC_DIR/PETSC_ARCH from the user's environment do not confuse configure.
+        # We explicitly point PETSC_DIR at the cloned source dir and clear PETSC_ARCH here.
+        # The configure options already include the desired PETSC_ARCH.
+        cmd = f"{prefix_down} env -u PETSC_ARCH PETSC_DIR=$PWD ./configure {cfg_joined}"
         c.run(cmd, echo=True, pty=True)
         # Build PETSc
         print("Building PETSc (this may take a long time) …")
@@ -307,8 +356,10 @@ def install_petsc(c):
     )
 
 
-@task(pre=[install_petsc])
-def install_firedrake(c):
+@task(pre=[install_petsc], help={
+    "ref": "Firedrake version to install via pip (e.g., 2025.10.0). Defaults to 'latest' or FIREDRAKE_REF env.",
+})
+def install_firedrake(c: Context, ref: str = "") -> None:
     """
     Install the Firedrake Python package (with [check]) inside the venv via pip.
     We explicitly pass PETSC_DIR and PETSC_ARCH (from install_petsc) so that petsc4py
@@ -330,28 +381,128 @@ def install_firedrake(c):
     c.run("echo 'Cython<3.1' > constraints.txt", echo=True)
     os.environ["PIP_CONSTRAINT"] = "constraints.txt"
 
+    requested_ref = (ref or os.environ.get("FIREDRAKE_REF", "")).strip()
+    # Build the pip spec for firedrake (pin if requested)
+    if requested_ref and requested_ref.lower() != "latest":
+        firedrake_spec = f"firedrake[check]=={requested_ref}"
+        _task_screen_log(f"Pinning firedrake to version {requested_ref}", color="green")
+    else:
+        firedrake_spec = "firedrake[check]"
+
     # Now call pip install, making sure PETSC_DIR/PETSC_ARCH/CC/CXX/HDF5_MPI are exported.
     # NOTE: PETSC_DIR must be absolute, otherwise petsc4py's build script will look in /tmp/…
-    cmd = (
+    base_env = (
         f"{prefix}"
         f"PETSC_DIR={petsc_dir} PETSC_ARCH={petsc_arch} "
         f"CC=mpicc CXX=mpicxx HDF5_MPI=ON "
-        f"pip install --no-binary h5py 'firedrake[check]'"
     )
 
-    c.run(cmd, pty=True, echo=True)
+    # First try PyPI (if version is available there)
+    cmd_pypi = f"{base_env}pip install --no-binary h5py '{firedrake_spec}'"
+    res = c.run(cmd_pypi, pty=True, echo=True, warn=True)
+
+    # If pinned and PyPI failed, try the GitHub tarball for the tag
+    if res.failed and requested_ref and requested_ref.lower() != "latest":
+        tarball_url = (
+            "https://github.com/firedrakeproject/firedrake/archive/refs/tags/"
+            f"{requested_ref}.tar.gz"
+        )
+        _task_screen_log(
+            f"PyPI install failed for firedrake=={requested_ref}; trying GitHub tarball…",
+            color="yellow",
+        )
+        cmd_url = f"{base_env}pip install --no-binary h5py 'firedrake[check]@{tarball_url}'"
+        c.run(cmd_url, pty=True, echo=True)
 
     # Clean up constraint file:
     os.environ.pop("PIP_CONSTRAINT", None)
 
     print("\nVerifying the installation …")
+    # Some Firedrake dependency stacks (via pyop2) expect immutabledict but it may
+    # not be pulled in automatically on some platforms. Ensure it's present.
     try:
-        os.environ["OMP_NUM_THREADS"] = "1"
-        c.run(f"{prefix} firedrake-check", echo=True, pty=True)
+        c.run(f"{prefix} python -c 'import immutabledict'", hide=True, warn=True)
+    except Exception:
+        # We use warn=True so this block is rarely executed; be robust here too.
+        pass
+    res_immut = c.run(f"{prefix} python -c 'import immutabledict'", hide=True, warn=True)
+    if res_immut.failed:
+        _task_screen_log("Installing missing dependency: immutabledict …", color="yellow")
+        c.run(f"{prefix} pip install immutabledict", pty=True, echo=True)
+    try:
+        # Run checks with PETSC_DIR/PETSC_ARCH unset to avoid conflicts with petsc4py-configured PETSc
+        c.run(f"{prefix} env -u PETSC_DIR -u PETSC_ARCH OMP_NUM_THREADS=1 firedrake-check", echo=True, pty=True)
         _task_screen_log("✔ Firedrake installed successfully.", color="green")
-        os.environ.pop("OMP_NUM_THREADS", None)
     except Exception as e:
         raise Exit(f"Failed to import Firedrake: {e}")
+
+
+@task(help={
+    "ref": "Firedrake release tag to pin across all steps (e.g., 2025.10.0).",
+    "python": "Python interpreter to use for the venv. Defaults to the active interpreter running Invoke.",
+    "force": "Recreate venv and redownload firedrake-configure if present.",
+})
+def setup_firedrake(c: Context, ref: str = "", python: str | None = None, force: bool = False) -> None:
+    """
+    One-shot setup of Firedrake toolchain honoring a specific release tag.
+
+    This runs, in order: create_venv, install_deps, download_firedrake_configure (pinned),
+    install_system_packages, install_petsc, and install_firedrake (pinned).
+    """
+    # Choose interpreter: if not provided, default to the one running this task.
+    chosen_python = python or sys.executable
+
+    # If the chosen interpreter is >=3.13, try to auto-fallback to a known-good Python (3.11/3.12)
+    # to avoid missing wheels (e.g., VTK) for Firedrake 2025.10.0.
+    try:
+        ver = c.run(
+            f"{chosen_python} -c \"import sys; print(str(sys.version_info[0])+'.'+str(sys.version_info[1]))\"",
+            hide=True,
+            warn=True,
+        )
+        major_minor = (ver.stdout or "").strip()
+        maj, minr = [int(x) for x in major_minor.split(".")[:2]]
+    except Exception:
+        maj, minr = (0, 0)
+
+    if (maj, minr) >= (3, 13):
+        candidates: list[str] = []
+        if _HOST_SYSTEM == "Darwin":
+            # Common Homebrew locations first, then PATH fallbacks
+            candidates.extend([
+                "/opt/homebrew/bin/python3.11",
+                "/usr/local/bin/python3.11",
+                "/opt/homebrew/bin/python3.12",
+                "/usr/local/bin/python3.12",
+            ])
+        # Generic fallbacks for any platform (resolved via PATH)
+        candidates.extend(["python3.11", "python3.12"]) 
+
+        for cand in candidates:
+            # Accept either absolute path existing or an executable discoverable on PATH
+            if os.path.isabs(cand) and os.path.exists(cand):
+                chosen_python = cand
+                _task_screen_log(
+                    f"Detected Python {maj}.{minr}. Auto-selecting '{cand}' for the venv to ensure Firedrake wheels.",
+                    color="yellow",
+                )
+                break
+            if shutil.which(cand):
+                chosen_python = cand
+                _task_screen_log(
+                    f"Detected Python {maj}.{minr}. Auto-selecting '{cand}' for the venv to ensure Firedrake wheels.",
+                    color="yellow",
+                )
+                break
+
+    # Ensure we use the chosen Python and a clean venv if forcing
+    create_venv(c, python=chosen_python, force=force)
+    install_deps(c)
+    # Ensure we use the same ref for both the configure script and pip install
+    download_firedrake_configure(c, ref=ref, force=force)
+    install_system_packages(c)
+    install_petsc(c)
+    install_firedrake(c, ref=ref)
 
 
 @task
@@ -551,8 +702,10 @@ def tests(
     if host_system not in _SUPPORTED_SYSTEMS:
         raise exceptions.Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
     pty_flag = True if host_system != "Windows" else False
-    _task_screen_log(f"Running: {base_command}", color="yellow", bold=False)
-    ctx.run(base_command, pty=pty_flag)
+    # Avoid inheriting PETSc env vars that can confuse petsctools/petsc4py
+    full_cmd = f"env -u PETSC_DIR -u PETSC_ARCH {base_command}"
+    _task_screen_log(f"Running: {full_cmd}", color="yellow", bold=False)
+    ctx.run(full_cmd, pty=pty_flag)
 
 
 @task(
@@ -603,8 +756,10 @@ def tests_ipynb(
     if host_system not in _SUPPORTED_SYSTEMS:
         raise exceptions.Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
     pty_flag = True if host_system != "Windows" else False
-    _task_screen_log(f"Running: {base_command}", color="yellow", bold=False)
-    ctx.run(base_command, pty=pty_flag)
+    # Avoid inheriting PETSc env vars that can confuse petsctools/petsc4py
+    full_cmd = f"env -u PETSC_DIR -u PETSC_ARCH {base_command}"
+    _task_screen_log(f"Running: {full_cmd}", color="yellow", bold=False)
+    ctx.run(full_cmd, pty=pty_flag)
 
 
 @task
