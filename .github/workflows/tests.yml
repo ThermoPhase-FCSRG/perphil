@@ -68,6 +68,12 @@ jobs:
           # Expose ccache's libexec wrappers on PATH (optional; CC/CXX use ccache anyway)
           echo "$(brew --prefix)/opt/ccache/libexec" >> $GITHUB_PATH
 
+      - name: Set up fallback Python 3.12 for venv (when matrix is 3.13)
+        if: matrix.python-version == '3.13'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Download firedrake-configure (for PETSc version discovery)
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -126,7 +132,11 @@ jobs:
       - name: Create virtual environment (if cache missed)
         run: |
           if [ ! -d .venv ]; then
-            python -m venv .venv
+            if [ "${{ matrix.python-version }}" = "3.13" ]; then
+              python3.12 -m venv .venv
+            else
+              python -m venv .venv
+            fi
           fi
 
       - name: Build or reuse PETSc via Invoke (uses .venv)
