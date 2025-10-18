@@ -42,10 +42,12 @@ def _venv_activate_prefix() -> str:
     return f"source {VENV_DIR}/bin/activate && "
 
 
-@task(help={
-    "python": "Python interpreter to use for the venv (e.g., python3.11). Defaults to 'python3.12'.",
-    "force": "Recreate the virtualenv if it already exists.",
-})
+@task(
+    help={
+        "python": "Python interpreter to use for the venv (e.g., python3.11). Defaults to 'python3.12'.",
+        "force": "Recreate the virtualenv if it already exists.",
+    }
+)
 def create_venv(c: Context, python: str = "python3.11", force: bool = False) -> None:
     """
     Create a Python 3.10+ virtualenv in ./.venv if it does not already exist.
@@ -98,10 +100,13 @@ def install_deps(c):
     _task_screen_log("✔ Python-level dependencies installed.", color="yellow")
 
 
-@task(pre=[install_deps], help={
-    "ref": "Firedrake release tag to pin (e.g., 2025.10.0). Defaults to 'latest' or FIREDRAKE_REF env.",
-    "force": "Redownload even if 'firedrake-configure' already exists.",
-})
+@task(
+    pre=[install_deps],
+    help={
+        "ref": "Firedrake release tag to pin (e.g., 2025.10.0). Defaults to 'latest' or FIREDRAKE_REF env.",
+        "force": "Redownload even if 'firedrake-configure' already exists.",
+    },
+)
 def download_firedrake_configure(c: Context, ref: str = "", force: bool = False) -> None:
     """
     Ensure a usable 'firedrake-configure' script is present in the repo root.
@@ -356,9 +361,12 @@ def install_petsc(c):
     )
 
 
-@task(pre=[install_petsc], help={
-    "ref": "Firedrake version to install via pip (e.g., 2025.10.0). Defaults to 'latest' or FIREDRAKE_REF env.",
-})
+@task(
+    pre=[install_petsc],
+    help={
+        "ref": "Firedrake version to install via pip (e.g., 2025.10.0). Defaults to 'latest' or FIREDRAKE_REF env.",
+    },
+)
 def install_firedrake(c: Context, ref: str = "") -> None:
     """
     Install the Firedrake Python package (with [check]) inside the venv via pip.
@@ -392,9 +400,7 @@ def install_firedrake(c: Context, ref: str = "") -> None:
     # Now call pip install, making sure PETSC_DIR/PETSC_ARCH/CC/CXX/HDF5_MPI are exported.
     # NOTE: PETSC_DIR must be absolute, otherwise petsc4py's build script will look in /tmp/…
     base_env = (
-        f"{prefix}"
-        f"PETSC_DIR={petsc_dir} PETSC_ARCH={petsc_arch} "
-        f"CC=mpicc CXX=mpicxx HDF5_MPI=ON "
+        f"{prefix}PETSC_DIR={petsc_dir} PETSC_ARCH={petsc_arch} CC=mpicc CXX=mpicxx HDF5_MPI=ON "
     )
 
     # First try PyPI (if version is available there)
@@ -431,18 +437,26 @@ def install_firedrake(c: Context, ref: str = "") -> None:
         c.run(f"{prefix} pip install immutabledict", pty=True, echo=True)
     try:
         # Run checks with PETSC_DIR/PETSC_ARCH unset to avoid conflicts with petsc4py-configured PETSc
-        c.run(f"{prefix} env -u PETSC_DIR -u PETSC_ARCH OMP_NUM_THREADS=1 firedrake-check", echo=True, pty=True)
+        c.run(
+            f"{prefix} env -u PETSC_DIR -u PETSC_ARCH OMP_NUM_THREADS=1 firedrake-check",
+            echo=True,
+            pty=True,
+        )
         _task_screen_log("✔ Firedrake installed successfully.", color="green")
     except Exception as e:
         raise Exit(f"Failed to import Firedrake: {e}")
 
 
-@task(help={
-    "ref": "Firedrake release tag to pin across all steps (e.g., 2025.10.0).",
-    "python": "Python interpreter to use for the venv. Defaults to the active interpreter running Invoke.",
-    "force": "Recreate venv and redownload firedrake-configure if present.",
-})
-def setup_firedrake(c: Context, ref: str = "", python: str | None = None, force: bool = False) -> None:
+@task(
+    help={
+        "ref": "Firedrake release tag to pin across all steps (e.g., 2025.10.0).",
+        "python": "Python interpreter to use for the venv. Defaults to the active interpreter running Invoke.",
+        "force": "Recreate venv and redownload firedrake-configure if present.",
+    }
+)
+def setup_firedrake(
+    c: Context, ref: str = "", python: str | None = None, force: bool = False
+) -> None:
     """
     One-shot setup of Firedrake toolchain honoring a specific release tag.
 
@@ -469,14 +483,16 @@ def setup_firedrake(c: Context, ref: str = "", python: str | None = None, force:
         candidates: list[str] = []
         if _HOST_SYSTEM == "Darwin":
             # Common Homebrew locations first, then PATH fallbacks
-            candidates.extend([
-                "/opt/homebrew/bin/python3.11",
-                "/usr/local/bin/python3.11",
-                "/opt/homebrew/bin/python3.12",
-                "/usr/local/bin/python3.12",
-            ])
+            candidates.extend(
+                [
+                    "/opt/homebrew/bin/python3.11",
+                    "/usr/local/bin/python3.11",
+                    "/opt/homebrew/bin/python3.12",
+                    "/usr/local/bin/python3.12",
+                ]
+            )
         # Generic fallbacks for any platform (resolved via PATH)
-        candidates.extend(["python3.11", "python3.12"]) 
+        candidates.extend(["python3.11", "python3.12"])
 
         for cand in candidates:
             # Accept either absolute path existing or an executable discoverable on PATH
@@ -644,6 +660,7 @@ def dev_install(ctx):
         "record_output": "Record all the pytest CLI output to pytest-coverage.txt file",
     },
     optional=["numprocess"],
+    pre=[hooks],
 )
 def tests(
     ctx,
