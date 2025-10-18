@@ -20,6 +20,9 @@ permissions:
 jobs:
   tests:
     runs-on: ubuntu-latest
+    env:
+      # Pin the Firedrake release used for CI to ensure deterministic installs
+      FIREDRAKE_REF: "2025.10.0"
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -30,7 +33,8 @@ jobs:
         id: setup-python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          # Firedrake 2025.10.0 has robust wheel availability for Python 3.11
+          python-version: '3.11'
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -55,7 +59,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          inv download-firedrake-configure
+          inv download-firedrake-configure --ref=${{ env.FIREDRAKE_REF }}
 
       - name: Determine PETSc version required by Firedrake
         id: petsc
@@ -103,16 +107,23 @@ jobs:
       - name: Create virtual environment (if cache missed)
         run: |
           if [ ! -d .venv ]; then
-            python3 -m venv .venv
+            python -m venv .venv
           fi
 
-      - name: Install Firedrake and PETSc via Invoke tasks (uses .venv)
+      - name: Build or reuse PETSc via Invoke (uses .venv)
         env:
           CC: "ccache mpicc"
           CXX: "ccache mpicxx"
         run: |
           mkdir -p ~/.ccache
-          inv install-firedrake
+          inv install-petsc
+
+      - name: Install Firedrake (pinned) via Invoke (uses .venv)
+        env:
+          CC: "ccache mpicc"
+          CXX: "ccache mpicxx"
+        run: |
+          inv install-firedrake --ref=${{ env.FIREDRAKE_REF }}
 
       - name: Run tests with coverage
         env:
@@ -120,7 +131,7 @@ jobs:
         run: |
           source .venv/bin/activate
           python -m pip install -e '.[dev]'
-          pytest --cov=src/perphil --cov-report=xml --cov-report=term-missing
+          env -u PETSC_DIR -u PETSC_ARCH pytest --cov=src/perphil --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage artifact
         if: always()
