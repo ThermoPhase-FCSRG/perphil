@@ -19,7 +19,12 @@ permissions:
 
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ['3.12', '3.13']
     env:
       # Pin the Firedrake release used for CI to ensure deterministic installs
       FIREDRAKE_REF: "2025.10.0"
@@ -33,8 +38,7 @@ jobs:
         id: setup-python
         uses: actions/setup-python@v5
         with:
-          # Firedrake 2025.10.0 has robust wheel availability for Python 3.11
-          python-version: '3.11'
+          python-version: ${{ matrix.python-version }}
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -49,11 +53,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install invoke rich
 
-      - name: Install build accelerators (ccache)
+      - name: Install build accelerators (ccache) [Linux]
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y ccache
           echo "/usr/lib/ccache" >> $GITHUB_PATH
+
+      - name: Install build accelerators (ccache) [macOS]
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install ccache || true
+          # Expose ccache's libexec wrappers on PATH (optional; CC/CXX use ccache anyway)
+          echo "$(brew --prefix)/opt/ccache/libexec" >> $GITHUB_PATH
 
       - name: Download firedrake-configure (for PETSc version discovery)
         env:
@@ -64,17 +77,21 @@ jobs:
       - name: Determine PETSc version required by Firedrake
         id: petsc
         run: |
-          VER=$(python3 firedrake-configure --show-petsc-version)
+          VER=$(python firedrake-configure --show-petsc-version)
           echo "version=$VER" >> "$GITHUB_OUTPUT"
 
       - name: Hash PETSc configure options
         id: petsc-cfg
         run: |
-          CFG=$(python3 firedrake-configure --show-petsc-configure-options)
+          CFG=$(python firedrake-configure --show-petsc-configure-options)
           # Normalize whitespace to stabilize hash
           CFG_NORM=$(echo "$CFG" | tr -s ' \n' ' ')
           echo "$CFG_NORM" > petsc_configure_flags.txt
-          HASH=$(echo -n "$CFG_NORM" | sha256sum | cut -d ' ' -f1)
+          if command -v sha256sum >/dev/null 2>&1; then
+            HASH=$(printf "%s" "$CFG_NORM" | sha256sum | cut -d ' ' -f1)
+          else
+            HASH=$(printf "%s" "$CFG_NORM" | shasum -a 256 | cut -d ' ' -f1)
+          fi
           echo "hash=$HASH" >> "$GITHUB_OUTPUT"
 
       - name: Cache PETSc build directory
@@ -101,7 +118,9 @@ jobs:
 
       - name: Install core system packages for Firedrake/PETSc
         run: |
-          sudo apt-get update
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            sudo apt-get update
+          fi
           inv install-system-packages
 
       - name: Create virtual environment (if cache missed)
