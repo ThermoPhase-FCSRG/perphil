@@ -367,15 +367,13 @@ def install_petsc(c):
         # On macOS, sometimes mpif90 isn't present; prefer mpifort if available
         if shutil.which(fc) is None and shutil.which("mpifort") is not None:
             fc = "mpifort"
-        # Export compilers into environment to avoid CLI env var warnings
-        os.environ["CC"] = cc
-        os.environ["CXX"] = cxx
-        os.environ["FC"] = fc
-        # Build configure command
-        # IMPORTANT: Ensure PETSC_DIR/PETSC_ARCH from the user's environment do not confuse configure.
+        # Build configure command with compilers as arguments (not env vars)
+        # IMPORTANT: PETSc's configure script ignores CC/CXX/FC environment variables and
+        # requires them to be passed as command-line arguments to avoid warnings.
+        # Ensure PETSC_DIR/PETSC_ARCH from the user's environment do not confuse configure.
         # We explicitly point PETSC_DIR at the cloned source dir and clear PETSC_ARCH here.
         # The configure options already include the desired PETSC_ARCH.
-        cmd = f"{prefix_down} env -u PETSC_ARCH PETSC_DIR=$PWD ./configure {cfg_joined}"
+        cmd = f"{prefix_down} env -u PETSC_ARCH -u CC -u CXX -u FC PETSC_DIR=$PWD ./configure CC={cc} CXX={cxx} FC={fc} {cfg_joined}"
         c.run(cmd, echo=True, pty=True)
         # Build PETSc
         print("Building PETSc (this may take a long time) …")
@@ -503,8 +501,17 @@ def install_firedrake(c: Context, ref: str = "") -> None:
         c.run(f"{prefix} pip install immutabledict", pty=True, echo=True)
     try:
         # Run checks with PETSC_DIR/PETSC_ARCH unset to avoid conflicts with petsc4py-configured PETSc
+        # In CI environments (detected via CI=true env var), skip parallel tests since GHA runners
+        # have limited CPU cores (typically 2) which causes MPI to fail when requesting 3+ processes
+        is_ci = os.environ.get("CI", "").lower() in ("true", "1", "yes")
+        check_cmd = f"{prefix} env -u PETSC_DIR -u PETSC_ARCH OMP_NUM_THREADS=1 firedrake-check"
+        if is_ci:
+            check_cmd += " --serial-only"
+            _task_screen_log(
+                "Running firedrake-check in serial-only mode (CI environment)", color="yellow"
+            )
         c.run(
-            f"{prefix} env -u PETSC_DIR -u PETSC_ARCH OMP_NUM_THREADS=1 firedrake-check",
+            check_cmd,
             echo=True,
             pty=True,
         )

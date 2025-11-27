@@ -28,6 +28,7 @@ jobs:
     env:
       # Pin the Firedrake release used for CI to ensure deterministic installs
       FIREDRAKE_REF: "2025.10.0"
+      CI: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v5
