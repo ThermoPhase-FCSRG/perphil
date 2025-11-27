@@ -435,11 +435,35 @@ def install_firedrake(c: Context, ref: str = "") -> None:
     else:
         firedrake_spec = "firedrake[check]"
 
-    # Now call pip install, making sure PETSC_DIR/PETSC_ARCH/CC/CXX/HDF5_MPI are exported.
+    # Detect HDF5 installation (required for h5py build)
+    hdf5_dir = ""
+    if _HOST_SYSTEM == "Darwin":
+        # On macOS, check for hdf5-mpi via Homebrew
+        hdf5_check = c.run("brew --prefix hdf5-mpi 2>/dev/null || echo ''", hide=True, warn=True)
+        if hdf5_check and not getattr(hdf5_check, "failed", False):
+            hdf5_dir = (getattr(hdf5_check, "stdout", "") or "").strip()
+        if not hdf5_dir:
+            # Fallback: try regular hdf5 (though MPI version is preferred)
+            hdf5_check = c.run("brew --prefix hdf5 2>/dev/null || echo ''", hide=True, warn=True)
+            if hdf5_check and not getattr(hdf5_check, "failed", False):
+                hdf5_dir = (getattr(hdf5_check, "stdout", "") or "").strip()
+    elif _HOST_SYSTEM == "Linux":
+        # On Linux, check common HDF5 locations
+        for candidate in ["/usr/lib/x86_64-linux-gnu/hdf5/openmpi", "/usr", "/usr/local"]:
+            if os.path.isdir(os.path.join(candidate, "include")) and os.path.isfile(
+                os.path.join(candidate, "include", "hdf5.h")
+            ):
+                hdf5_dir = candidate
+                break
+
+    # Now call pip install, making sure PETSC_DIR/PETSC_ARCH/CC/CXX/HDF5_MPI/HDF5_DIR are exported.
     # NOTE: PETSC_DIR must be absolute, otherwise petsc4py's build script will look in /tmp/…
     base_env = (
         f"{prefix}PETSC_DIR={petsc_dir} PETSC_ARCH={petsc_arch} CC=mpicc CXX=mpicxx HDF5_MPI=ON "
     )
+    if hdf5_dir:
+        base_env += f"HDF5_DIR={hdf5_dir} "
+        _task_screen_log(f"Using HDF5 from: {hdf5_dir}", color="green")
 
     # First try PyPI (if version is available there)
     cmd_pypi = f"{base_env}pip install --no-binary h5py '{firedrake_spec}'"
