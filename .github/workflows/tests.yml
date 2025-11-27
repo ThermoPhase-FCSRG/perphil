@@ -27,7 +27,7 @@ jobs:
         python-version: ['3.12', '3.13']
     env:
       # Pin the Firedrake release used for CI to ensure deterministic installs
-      FIREDRAKE_REF: "2025.10.0"
+      FIREDRAKE_REF: "2025.10.2"
       CI: "true"
     steps:
       - name: Checkout
