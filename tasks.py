@@ -262,7 +262,8 @@ def install_system_packages(c):
             _task_screen_log("✔ All system packages are already installed.", color="green")
 
     elif system == "Darwin":
-        all_pkgs = base_pkgs  # macOS doesn’t need explicit OpenMPI lines here (brew will pull it if required)
+        # macOS needs gcc (which provides gfortran) for OpenMPI to have Fortran support
+        all_pkgs = base_pkgs + ["gcc"]
 
         missing = []
         for pkg in all_pkgs:
