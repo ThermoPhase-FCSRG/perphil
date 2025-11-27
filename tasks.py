@@ -520,13 +520,6 @@ def install_firedrake(c: Context, ref: str = "") -> None:
         # as that's how we installed it.
         check_cmd = f"{prefix} {setup_env} && OMP_NUM_THREADS=1 firedrake-check"
 
-        is_ci = os.environ.get("CI", "").lower() in ("true", "1", "yes")
-        if is_ci:
-            check_cmd += " --serial-only"
-            _task_screen_log(
-                "Running firedrake-check in serial-only mode (CI environment)", color="yellow"
-            )
-
         c.run(check_cmd, echo=True, pty=True)
         _task_screen_log("✔ Firedrake installed successfully.", color="green")
     except Exception as e:
