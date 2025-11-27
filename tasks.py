@@ -10,7 +10,7 @@ from invoke.context import Context
 from invoke.exceptions import Exit
 from rich import print
 
-_PACKAGE_NAME = "dpp-studies"
+_PACKAGE_NAME = "perphil"
 _HOST_SYSTEM = platform.system()
 _SUPPORTED_SYSTEMS = (
     "Linux",
@@ -333,6 +333,16 @@ def install_petsc(c):
             )
             os.environ["PETSC_DIR"] = abs_petsc
             os.environ["PETSC_ARCH"] = arch
+
+            # Create a symlink 'petsc' -> petsc_dir so that firedrake-configure --show-env works correctly
+            if not os.path.exists("petsc"):
+                os.symlink(petsc_dir, "petsc")
+                _task_screen_log(f"✔ Created symlink 'petsc' -> '{petsc_dir}'", color="yellow")
+            elif os.path.islink("petsc") and os.readlink("petsc") != petsc_dir:
+                os.remove("petsc")
+                os.symlink(petsc_dir, "petsc")
+                _task_screen_log(f"✔ Updated symlink 'petsc' -> '{petsc_dir}'", color="yellow")
+
             print(f"→ Exported PETSC_DIR={abs_petsc}")
             print(f"→ Exported PETSC_ARCH={arch}")
             return
@@ -415,6 +425,14 @@ def install_petsc(c):
     os.environ["PETSC_DIR"] = abs_petsc
     os.environ["PETSC_ARCH"] = arch
 
+    # Create a symlink 'petsc' -> petsc_dir so that firedrake-configure --show-env works correctly
+    # firedrake-configure assumes PETSC_DIR is os.getcwd()/petsc if not explicitly set,
+    # but --show-env logic might depend on finding the dir.
+    if os.path.lexists("petsc"):
+        os.remove("petsc")
+    os.symlink(petsc_dir, "petsc")
+    _task_screen_log(f"✔ Created symlink 'petsc' -> '{petsc_dir}'", color="yellow")
+
     print(f"→ Exported PETSC_DIR={abs_petsc}")
     print(f"→ Exported PETSC_ARCH={arch}")
     _task_screen_log(
@@ -431,118 +449,87 @@ def install_petsc(c):
 def install_firedrake(c: Context, ref: str = "") -> None:
     """
     Install the Firedrake Python package (with [check]) inside the venv via pip.
-    We explicitly pass PETSC_DIR and PETSC_ARCH (from install_petsc) so that petsc4py
-    can find the correct build.
+    We use the environment variables from firedrake-configure to ensure it links against our custom PETSc.
     """
     prefix = _venv_activate_prefix()
-
-    # Grab exactly what install_petsc set earlier in os.environ:
-    petsc_dir = os.environ.get("PETSC_DIR", "").strip()
-    petsc_arch = os.environ.get("PETSC_ARCH", "").strip()
-    if not petsc_dir or not petsc_arch:
-        raise Exit(
-            "PETSC_DIR and PETSC_ARCH must be set by install_petsc before installing Firedrake."
-        )
-
     _task_screen_log("Installing Firedrake in the virtualenv …")
 
-    # Pin Cython < 3.1 in constraints.txt:
+    # Pin Cython < 3.1 in constraints.txt (Firedrake requirement)
     c.run("echo 'Cython<3.1' > constraints.txt", echo=True)
     os.environ["PIP_CONSTRAINT"] = "constraints.txt"
 
     requested_ref = (ref or os.environ.get("FIREDRAKE_REF", "")).strip()
-    # Build the pip spec for firedrake (pin if requested)
     if requested_ref and requested_ref.lower() != "latest":
         firedrake_spec = f"firedrake[check]=={requested_ref}"
         _task_screen_log(f"Pinning firedrake to version {requested_ref}", color="green")
     else:
         firedrake_spec = "firedrake[check]"
 
-    # Detect HDF5 installation (required for h5py build)
-    hdf5_dir = ""
-    if _HOST_SYSTEM == "Darwin":
-        # On macOS, check for hdf5-mpi via Homebrew
-        hdf5_check = c.run("brew --prefix hdf5-mpi 2>/dev/null || echo ''", hide=True, warn=True)
-        if hdf5_check and not getattr(hdf5_check, "failed", False):
-            hdf5_dir = (getattr(hdf5_check, "stdout", "") or "").strip()
-        if not hdf5_dir:
-            # Fallback: try regular hdf5 (though MPI version is preferred)
-            hdf5_check = c.run("brew --prefix hdf5 2>/dev/null || echo ''", hide=True, warn=True)
-            if hdf5_check and not getattr(hdf5_check, "failed", False):
-                hdf5_dir = (getattr(hdf5_check, "stdout", "") or "").strip()
-    elif _HOST_SYSTEM == "Linux":
-        # On Linux, check common HDF5 locations
-        for candidate in ["/usr/lib/x86_64-linux-gnu/hdf5/openmpi", "/usr", "/usr/local"]:
-            if os.path.isdir(os.path.join(candidate, "include")) and os.path.isfile(
-                os.path.join(candidate, "include", "hdf5.h")
-            ):
-                hdf5_dir = candidate
-                break
+    # Construct the command to set environment variables and install Firedrake
+    # We use `eval $(python firedrake-configure --show-env)` to set CC, CXX, PETSC_DIR, PETSC_ARCH, etc.
+    # This ensures we use the exact configuration that firedrake-configure expects.
+    setup_env = f"export $({prefix} python firedrake-configure --show-env)"
 
-    # Now call pip install, making sure PETSC_DIR/PETSC_ARCH/CC/CXX/HDF5_MPI/HDF5_DIR are exported.
-    # NOTE: PETSC_DIR must be absolute, otherwise petsc4py's build script will look in /tmp/…
-    base_env = (
-        f"{prefix}PETSC_DIR={petsc_dir} PETSC_ARCH={petsc_arch} CC=mpicc CXX=mpicxx HDF5_MPI=ON "
-    )
-    if hdf5_dir:
-        base_env += f"HDF5_DIR={hdf5_dir} "
-        _task_screen_log(f"Using HDF5 from: {hdf5_dir}", color="green")
+    # Standard install command from documentation:
+    # pip install --no-binary h5py 'firedrake[check]'
+    install_cmd = f"{prefix} {setup_env} && pip install --no-binary h5py '{firedrake_spec}'"
 
-    # First try PyPI (if version is available there)
-    cmd_pypi = f"{base_env}pip install --no-binary h5py '{firedrake_spec}'"
-    res = c.run(cmd_pypi, pty=True, echo=True, warn=True)
+    _task_screen_log("Running pip install for Firedrake (standard PyPI install) …")
+    res = c.run(install_cmd, pty=True, echo=True, warn=True)
 
-    # If pinned and PyPI failed, try the GitHub tarball for the tag
-    if (
-        (res is None or getattr(res, "failed", False))
-        and requested_ref
-        and requested_ref.lower() != "latest"
-    ):
-        tarball_url = (
-            "https://github.com/firedrakeproject/firedrake/archive/refs/tags/"
-            f"{requested_ref}.tar.gz"
-        )
+    # If PyPI failed (e.g. version mismatch with PETSc), try fallbacks
+    if res is None or getattr(res, "failed", False):
         _task_screen_log(
-            f"PyPI install failed for firedrake=={requested_ref}; trying GitHub tarball…",
-            color="yellow",
+            "PyPI install failed. Attempting fallback installation methods…", color="yellow"
         )
-        cmd_url = f"{base_env}pip install --no-binary h5py 'firedrake[check]@{tarball_url}'"
-        c.run(cmd_url, pty=True, echo=True)
 
-    # Clean up constraint file:
+        if requested_ref and requested_ref.lower() != "latest":
+            # Fallback for pinned version: try GitHub tarball
+            tarball_url = (
+                "https://github.com/firedrakeproject/firedrake/archive/refs/tags/"
+                f"{requested_ref}.tar.gz"
+            )
+            _task_screen_log(f"Trying GitHub tarball for tag {requested_ref}…", color="yellow")
+            cmd_url = f"{prefix} {setup_env} && pip install --no-binary h5py 'firedrake[check]@{tarball_url}'"
+            c.run(cmd_url, pty=True, echo=True)
+        else:
+            # Fallback for latest: try GitHub default branch
+            _task_screen_log("Trying Firedrake from GitHub default branch…", color="yellow")
+            cmd_git = f"{prefix} {setup_env} && pip install --no-binary h5py 'firedrake[check] @ git+https://github.com/firedrakeproject/firedrake.git'"
+            c.run(cmd_git, pty=True, echo=True)
+
+    # Clean up constraint file
     os.environ.pop("PIP_CONSTRAINT", None)
 
     print("\nVerifying the installation …")
-    # Some Firedrake dependency stacks (via pyop2) expect immutabledict but it may
-    # not be pulled in automatically on some platforms. Ensure it's present.
-    try:
-        c.run(f"{prefix} python -c 'import immutabledict'", hide=True, warn=True)
-    except Exception:
-        # We use warn=True so this block is rarely executed; be robust here too.
-        pass
+    # Ensure immutabledict is present (sometimes missed by dependencies)
     res_immut = c.run(f"{prefix} python -c 'import immutabledict'", hide=True, warn=True)
     if res_immut is None or getattr(res_immut, "failed", False):
         _task_screen_log("Installing missing dependency: immutabledict …", color="yellow")
         c.run(f"{prefix} pip install immutabledict", pty=True, echo=True)
+
     try:
-        # Run checks with PETSC_DIR/PETSC_ARCH unset to avoid conflicts with petsc4py-configured PETSc
-        # In CI environments (detected via CI=true env var), skip parallel tests since GHA runners
-        # have limited CPU cores (typically 2) which causes MPI to fail when requesting 3+ processes
+        # Run checks. We unset PETSC_DIR/ARCH to ensure the installed package finds them itself (or via baked-in paths)
+        # but firedrake-check might actually need them if the install isn't fully relocatable.
+        # However, the standard check command usually works if the venv is active.
+        # We'll try running it with the env vars set by firedrake-configure just to be safe,
+        # or just rely on the venv.
+
+        # Note: The previous task unset them. Let's try running with the configured env to be safe,
+        # as that's how we installed it.
+        check_cmd = f"{prefix} {setup_env} && OMP_NUM_THREADS=1 firedrake-check"
+
         is_ci = os.environ.get("CI", "").lower() in ("true", "1", "yes")
-        check_cmd = f"{prefix} env -u PETSC_DIR -u PETSC_ARCH OMP_NUM_THREADS=1 firedrake-check"
         if is_ci:
             check_cmd += " --serial-only"
             _task_screen_log(
                 "Running firedrake-check in serial-only mode (CI environment)", color="yellow"
             )
-        c.run(
-            check_cmd,
-            echo=True,
-            pty=True,
-        )
+
+        c.run(check_cmd, echo=True, pty=True)
         _task_screen_log("✔ Firedrake installed successfully.", color="green")
     except Exception as e:
-        raise Exit(f"Failed to import Firedrake: {e}")
+        raise Exit(f"Failed to verify Firedrake installation: {e}")
 
 
 @task(
@@ -632,6 +619,11 @@ def clean(c):
         c.run("rm -rf petsc-*", echo=True)
         c.run("pip uninstall -y petsc4py", echo=True)
         c.run("pip cache remove petsc4py", echo=True)
+
+    # Remove petsc symlink
+    if os.path.islink("petsc"):
+        print("Removing 'petsc' symlink …")
+        os.remove("petsc")
 
     # Remove firedrake-configure script if present:
     for fname in ["firedrake-configure"]:
