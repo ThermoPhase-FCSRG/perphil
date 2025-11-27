@@ -5,7 +5,9 @@ import shlex
 import shutil
 import sys
 import platform
-from invoke import task, exceptions, Exit, Context
+from invoke import task
+from invoke.context import Context
+from invoke.exceptions import Exit
 from rich import print
 
 _PACKAGE_NAME = "dpp-studies"
@@ -29,9 +31,7 @@ def _task_screen_log(message: str, bold: bool = True, color: str = "blue") -> No
 def _platform_sanity_check() -> None:
     host_system = _HOST_SYSTEM
     if host_system not in _SUPPORTED_SYSTEMS:
-        raise exceptions.Exit(
-            f"The code is running on unsupported operating system: {host_system}", code=1
-        )
+        raise Exit(f"The code is running on unsupported operating system: {host_system}", code=1)
 
 
 def _venv_activate_prefix() -> str:
@@ -351,6 +351,31 @@ def install_petsc(c):
     )
     if not cfg_flags:
         raise Exit("No PETSc configure options found.")
+
+    # ------------------------------------------------------------------
+    # Fix ScaLAPACK + Fortran mismatch on macOS:
+    # Firedrake currently emits '--with-fortran-bindings=0' while also
+    # requesting ScaLAPACK (via --with-scalapack-dir=… or --download-scalapack).
+    # PETSc's configure refuses ScaLAPACK when Fortran bindings are disabled,
+    # producing: "Cannot use ScaLAPACK without Fortran".
+    # We patch the flag list here: if any scalapack-related flag is present
+    # we force '--with-fortran-bindings=1' and drop any disabling flag.
+    # ------------------------------------------------------------------
+    has_scalapack = any("scalapack" in f for f in cfg_flags if f.strip())
+    if has_scalapack:
+        new_flags: list[str] = []
+        for f in cfg_flags:
+            if f.startswith("--with-fortran-bindings="):
+                # Replace disable with enable
+                continue
+            new_flags.append(f)
+        # Append enabled Fortran bindings explicitly
+        new_flags.append("--with-fortran-bindings=1")
+        cfg_flags = new_flags
+        _task_screen_log(
+            "Adjusted PETSc flags: enabling Fortran bindings for ScaLAPACK.",
+            color="yellow",
+        )
 
     print("Configuring PETSc …")
     with c.cd(petsc_dir):
@@ -672,7 +697,7 @@ def run_hooks(ctx, all_files=False, verbose=False, files="", from_ref="", to_ref
     _task_screen_log(f"Running: {base_command}", color="yellow", bold=False)
     host_system = _HOST_SYSTEM
     if host_system not in _SUPPORTED_SYSTEMS:
-        raise exceptions.Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
+        raise Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
     pty_flag = True if host_system != "Windows" else False
     ctx.run(base_command, pty=pty_flag)
 
@@ -696,7 +721,7 @@ def pair_ipynbs(ctx, src="notebooks/*.ipynb", dry=False):
         raw = list(src)
     notebooks = [Path(p) for p in raw if Path(p).suffix == ".ipynb"]
     if not notebooks:
-        raise exceptions.Exit(f"No notebooks found for {src}", 1)
+        raise Exit(f"No notebooks found for {src}", 1)
 
     # Run pairing
     for nb in notebooks:
@@ -718,7 +743,7 @@ def dev_install(ctx):
     base_command = 'pip install -e ".[dev]"'
     host_system = _HOST_SYSTEM
     if host_system not in _SUPPORTED_SYSTEMS:
-        raise exceptions.Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
+        raise Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
     pty_flag = True if host_system != "Windows" else False
     ctx.run(base_command, pty=pty_flag)
 
@@ -791,7 +816,7 @@ def tests(
 
     host_system = _HOST_SYSTEM
     if host_system not in _SUPPORTED_SYSTEMS:
-        raise exceptions.Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
+        raise Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
     pty_flag = True if host_system != "Windows" else False
     # Avoid inheriting PETSc env vars that can confuse petsctools/petsc4py
     full_cmd = f"env -u PETSC_DIR -u PETSC_ARCH {base_command}"
@@ -845,7 +870,7 @@ def tests_ipynb(
 
     host_system = _HOST_SYSTEM
     if host_system not in _SUPPORTED_SYSTEMS:
-        raise exceptions.Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
+        raise Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
     pty_flag = True if host_system != "Windows" else False
     # Avoid inheriting PETSc env vars that can confuse petsctools/petsc4py
     full_cmd = f"env -u PETSC_DIR -u PETSC_ARCH {base_command}"
@@ -866,7 +891,7 @@ def diff_coverage(ctx):
 
     host_system = _HOST_SYSTEM
     if host_system not in _SUPPORTED_SYSTEMS:
-        raise exceptions.Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
+        raise Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
     pty_flag = True if host_system != "Windows" else False
     ctx.run(base_command, pty=pty_flag)
 
@@ -898,7 +923,7 @@ def type_check(ctx, pretty=False, verbose=False, color=True, files=""):
 
     host_system = _HOST_SYSTEM
     if host_system not in _SUPPORTED_SYSTEMS:
-        raise exceptions.Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
+        raise Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
     pty_flag = True if host_system != "Windows" else False
     _task_screen_log(f"Running: {base_command}", color="yellow", bold=False)
     ctx.run(base_command, pty=pty_flag)
