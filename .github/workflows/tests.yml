@@ -33,7 +33,7 @@ jobs:
           python-version: '3.10'
 
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
@@ -75,7 +75,7 @@ jobs:
 
       - name: Cache PETSc build directory
         id: cache-petsc
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             petsc-${{ steps.petsc.outputs.version }}
@@ -83,14 +83,14 @@ jobs:
 
       - name: Cache ccache store
         id: cache-ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.ccache
           key: ${{ runner.os }}-ccache-${{ steps.petsc.outputs.version }}-${{ steps.petsc-cfg.outputs.hash }}
 
       - name: Cache Python virtualenv (.venv)
         id: cache-venv
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .venv
           key: ${{ runner.os }}-venv-${{ steps.setup-python.outputs.python-version }}-${{ steps.petsc.outputs.version }}-${{ steps.petsc-cfg.outputs.hash }}-${{ hashFiles('pyproject.toml', 'tasks.py') }}
