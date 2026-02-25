@@ -386,17 +386,14 @@ def install_petsc(c):
             return
 
     print("Gathering PETSc configure flags …")
-    cfg_flags = (
-        c.run(
-            f"{prefix} python firedrake-configure --show-petsc-configure-options",
-            hide=True,
-            warn=True,
-            echo=True,
-            pty=True,
-        )
-        .stdout.strip()
-        .splitlines()
-    )
+    cfg_stdout = c.run(
+        f"{prefix} python firedrake-configure --show-petsc-configure-options",
+        hide=True,
+        warn=True,
+        echo=True,
+        pty=True,
+    ).stdout.strip()
+    cfg_flags = shlex.split(cfg_stdout)
     if not cfg_flags:
         raise Exit("No PETSc configure options found.")
 
@@ -409,7 +406,7 @@ def install_petsc(c):
     # We patch the flag list here: if any scalapack-related flag is present
     # we force '--with-fortran-bindings=1' and drop any disabling flag.
     # ------------------------------------------------------------------
-    has_scalapack = any("scalapack" in f for f in cfg_flags if f.strip())
+    has_scalapack = any("scalapack" in f for f in cfg_flags)
     if has_scalapack:
         new_flags: list[str] = []
         for f in cfg_flags:
@@ -425,28 +422,62 @@ def install_petsc(c):
             color="yellow",
         )
 
+    fortran_requested = any(f == "--with-fortran-bindings=1" for f in cfg_flags)
+
     print("Configuring PETSc …")
     with c.cd(petsc_dir):
         # Join configure flags into a single invocation
-        cfg_joined = " ".join(cfg_flags)
+        cfg_joined = " ".join(shlex.quote(flag) for flag in cfg_flags)
         # Determine compilers from environment and strip any ccache prefix
         raw_cc = os.environ.get("CC", "mpicc").strip()
         cc = raw_cc.split(" ", 1)[-1] if " " in raw_cc else raw_cc
         raw_cxx = os.environ.get("CXX", "mpicxx").strip()
         cxx = raw_cxx.split(" ", 1)[-1] if " " in raw_cxx else raw_cxx
-        # Ensure Fortran MPI compiler (mpif90) is available
-        raw_fc = os.environ.get("FC", "mpif90").strip()
-        fc = raw_fc.split(" ", 1)[-1] if " " in raw_fc else raw_fc
-        # On macOS, sometimes mpif90 isn't present; prefer mpifort if available
-        if shutil.which(fc) is None and shutil.which("mpifort") is not None:
-            fc = "mpifort"
+        compiler_args = [f"CC={cc}", f"CXX={cxx}"]
+        if fortran_requested:
+            raw_fc = os.environ.get("FC", "mpif90").strip()
+            requested_fc = raw_fc.split(" ", 1)[-1] if " " in raw_fc else raw_fc
+            if platform.system() == "Darwin":
+                fc_candidates = ["mpifort", requested_fc, "mpif90", "gfortran"]
+            else:
+                fc_candidates = [requested_fc, "mpifort", "mpif90", "gfortran"]
+
+            seen: set[str] = set()
+            ordered_candidates: list[str] = []
+            for candidate in fc_candidates:
+                if candidate and candidate not in seen:
+                    ordered_candidates.append(candidate)
+                    seen.add(candidate)
+
+            fc = ""
+            for candidate in ordered_candidates:
+                if shutil.which(candidate) is None:
+                    continue
+                probe = c.run(f"{candidate} --version", hide=True, warn=True)
+                if not probe.failed:
+                    fc = candidate
+                    break
+
+            if not fc:
+                raise Exit(
+                    "PETSc requested Fortran bindings, but no working Fortran compiler wrapper was found. "
+                    "Tried: "
+                    + ", ".join(ordered_candidates)
+                    + ". Please ensure OpenMPI Fortran wrappers are installed (e.g. mpifort)."
+                )
+            compiler_args.append(f"FC={fc}")
+
         # Build configure command with compilers as arguments (not env vars)
         # IMPORTANT: PETSc's configure script ignores CC/CXX/FC environment variables and
         # requires them to be passed as command-line arguments to avoid warnings.
         # Ensure PETSC_DIR/PETSC_ARCH from the user's environment do not confuse configure.
         # We explicitly point PETSC_DIR at the cloned source dir and clear PETSC_ARCH here.
         # The configure options already include the desired PETSC_ARCH.
-        cmd = f"{prefix_down} env -u PETSC_ARCH -u CC -u CXX -u FC PETSC_DIR=$PWD ./configure CC={cc} CXX={cxx} FC={fc} {cfg_joined}"
+        compiler_joined = " ".join(shlex.quote(arg) for arg in compiler_args)
+        cmd = (
+            f"{prefix_down} env -u PETSC_ARCH -u CC -u CXX -u FC PETSC_DIR=$PWD ./configure "
+            f"{compiler_joined} {cfg_joined}"
+        )
         c.run(cmd, echo=True, pty=True)
         # Build PETSc
         print("Building PETSc (this may take a long time) …")

@@ -144,6 +144,7 @@ jobs:
         env:
           CC: "ccache mpicc"
           CXX: "ccache mpicxx"
+          FC: ${{ runner.os == 'macOS' && 'mpifort' || 'mpif90' }}
         run: |
           mkdir -p ~/.ccache
           inv install-petsc
