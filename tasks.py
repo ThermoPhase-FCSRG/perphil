@@ -434,6 +434,7 @@ def install_petsc(c):
         raw_cxx = os.environ.get("CXX", "mpicxx").strip()
         cxx = raw_cxx.split(" ", 1)[-1] if " " in raw_cxx else raw_cxx
         compiler_args = [f"CC={cc}", f"CXX={cxx}"]
+        ompi_fc_env = ""
         if fortran_requested:
             raw_fc = os.environ.get("FC", "mpif90").strip()
             requested_fc = raw_fc.split(" ", 1)[-1] if " " in raw_fc else raw_fc
@@ -442,6 +443,19 @@ def install_petsc(c):
             else:
                 fc_candidates = [requested_fc, "mpifort", "mpif90", "gfortran"]
 
+            # Homebrew may expose only versioned Fortran compiler names (e.g. gfortran-15).
+            for pattern in (
+                "/opt/homebrew/opt/gcc/bin/gfortran-*",
+                "/usr/local/opt/gcc/bin/gfortran-*",
+            ):
+                fc_candidates.extend(sorted(glob.glob(pattern), reverse=True))
+            for path_dir in os.environ.get("PATH", "").split(os.pathsep):
+                if not path_dir:
+                    continue
+                fc_candidates.extend(
+                    sorted(glob.glob(os.path.join(path_dir, "gfortran-*")), reverse=True)
+                )
+
             seen: set[str] = set()
             ordered_candidates: list[str] = []
             for candidate in fc_candidates:
@@ -449,23 +463,59 @@ def install_petsc(c):
                     ordered_candidates.append(candidate)
                     seen.add(candidate)
 
+            # Keep a working gfortran fallback for OpenMPI wrappers that require OMPI_FC.
+            gfortran_fallback = ""
+            for candidate in ordered_candidates:
+                candidate_path = candidate if os.path.isabs(candidate) else shutil.which(candidate)
+                if not candidate_path:
+                    continue
+                base = os.path.basename(candidate_path)
+                if base != "gfortran" and not base.startswith("gfortran-"):
+                    continue
+                probe = c.run(f"{shlex.quote(candidate_path)} --version", hide=True, warn=True)
+                if not probe.failed:
+                    gfortran_fallback = candidate_path
+                    break
+
             fc = ""
             for candidate in ordered_candidates:
-                if shutil.which(candidate) is None:
+                candidate_path = candidate if os.path.isabs(candidate) else shutil.which(candidate)
+                if not candidate_path:
                     continue
-                probe = c.run(f"{candidate} --version", hide=True, warn=True)
+                probe = c.run(f"{shlex.quote(candidate_path)} --version", hide=True, warn=True)
                 if not probe.failed:
-                    fc = candidate
+                    fc = candidate_path
                     break
+
+                if (
+                    platform.system() == "Darwin"
+                    and os.path.basename(candidate_path) in {"mpifort", "mpif90"}
+                    and gfortran_fallback
+                ):
+                    probe_ompi_fc = c.run(
+                        f"OMPI_FC={shlex.quote(gfortran_fallback)} {shlex.quote(candidate_path)} --version",
+                        hide=True,
+                        warn=True,
+                    )
+                    if not probe_ompi_fc.failed:
+                        fc = candidate_path
+                        ompi_fc_env = gfortran_fallback
+                        break
 
             if not fc:
                 raise Exit(
                     "PETSc requested Fortran bindings, but no working Fortran compiler wrapper was found. "
                     "Tried: "
                     + ", ".join(ordered_candidates)
-                    + ". Please ensure OpenMPI Fortran wrappers are installed (e.g. mpifort)."
+                    + ". Please ensure OpenMPI Fortran wrappers are installed (e.g. mpifort) "
+                    "or that a working gfortran/gfortran-<version> is available on PATH."
                 )
             compiler_args.append(f"FC={fc}")
+            if ompi_fc_env:
+                _task_screen_log(
+                    f"Using OMPI_FC fallback with {ompi_fc_env} for OpenMPI Fortran wrappers.",
+                    color="yellow",
+                )
 
         # Build configure command with compilers as arguments (not env vars)
         # IMPORTANT: PETSc's configure script ignores CC/CXX/FC environment variables and
@@ -474,18 +524,20 @@ def install_petsc(c):
         # We explicitly point PETSC_DIR at the cloned source dir and clear PETSC_ARCH here.
         # The configure options already include the desired PETSC_ARCH.
         compiler_joined = " ".join(shlex.quote(arg) for arg in compiler_args)
+        ompi_fc_assignment = f" OMPI_FC={shlex.quote(ompi_fc_env)}" if ompi_fc_env else ""
         cmd = (
-            f"{prefix_down} env -u PETSC_ARCH -u CC -u CXX -u FC PETSC_DIR=$PWD ./configure "
+            f"{prefix_down} env -u PETSC_ARCH -u CC -u CXX -u FC{ompi_fc_assignment} PETSC_DIR=$PWD ./configure "
             f"{compiler_joined} {cfg_joined}"
         )
         c.run(cmd, echo=True, pty=True)
         # Build PETSc
         print("Building PETSc (this may take a long time) …")
-        c.run(f"make PETSC_DIR={abs_petsc} PETSC_ARCH={arch} all", echo=True)
+        make_prefix = f"OMPI_FC={shlex.quote(ompi_fc_env)} " if ompi_fc_env else ""
+        c.run(f"{make_prefix}make PETSC_DIR={abs_petsc} PETSC_ARCH={arch} all", echo=True)
         # Check PETSc installation
         print("Checking PETSc installation…")
         try:
-            c.run(f"make PETSC_DIR={abs_petsc} PETSC_ARCH={arch} check", echo=True)
+            c.run(f"{make_prefix}make PETSC_DIR={abs_petsc} PETSC_ARCH={arch} check", echo=True)
         except Exception as e:
             _task_screen_log("PETSc compiled, but failed in the checks!", color="red")
             _task_screen_log(f"PETSc check output: \n{e}", color="red")
