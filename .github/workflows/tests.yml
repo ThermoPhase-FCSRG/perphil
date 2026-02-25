@@ -52,7 +52,7 @@ jobs:
             -e XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
             -e PIP_CACHE_DIR="${PIP_CACHE_DIR}" \
             "${FIREDRAKE_IMAGE}" \
-            /bin/bash -lc 'python -c "import firedrake; print(\"Using Firedrake\", firedrake.__version__)" && python -m pip install -e ".[dev]" && python -m pytest --cov=src/perphil --cov-report=xml --cov-report=term-missing'
+            /bin/bash -lc 'PYBIN="$(command -v python3 || command -v python || true)"; if [ -z "$PYBIN" ]; then echo "No python interpreter found in image PATH=$PATH"; ls -l /usr/bin/python* /usr/local/bin/python* 2>/dev/null || true; exit 127; fi; "$PYBIN" -c "import firedrake; print(\"Using Firedrake\", firedrake.__version__)"; "$PYBIN" -m pip install -e ".[dev]"; "$PYBIN" -m pytest --cov=src/perphil --cov-report=xml --cov-report=term-missing'
 
       - name: Upload coverage artifact
         if: always()
