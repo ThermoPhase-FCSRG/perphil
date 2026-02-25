@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import re
 import sys
 import platform
 from invoke import task
@@ -66,6 +67,94 @@ def _pip_cache_exports() -> str:
     return f"PIP_CACHE_DIR={shlex.quote(str(pip_cache))}"
 
 
+def _sanitize_petsc_optflags_for_macos(cfg_flags: list[str]) -> list[str]:
+    """
+    Remove CPU-specific native tuning flags from PETSc OPTFLAGS on macOS.
+
+    Rationale:
+    - Firedrake emits -march=native/-mtune=native in C/C++ OPTFLAGS.
+    - During pip builds (e.g. petsc4py), Python may request universal2 extension
+      builds on macOS, adding both -arch arm64 and -arch x86_64.
+    - The host-native CPU flag (e.g. apple-m3) then leaks into the x86_64 compile
+      slice and fails with "unknown target CPU".
+    """
+    if platform.system() != "Darwin":
+        return cfg_flags
+
+    cleaned: list[str] = []
+    native_flag_pattern = re.compile(r"^-m(?:arch|tune)=native$")
+    for flag in cfg_flags:
+        if not (
+            flag.startswith("--COPTFLAGS=")
+            or flag.startswith("--CXXOPTFLAGS=")
+            or flag.startswith("--FOPTFLAGS=")
+        ):
+            cleaned.append(flag)
+            continue
+
+        opt_name, opt_value = flag.split("=", 1)
+        parts = [part for part in shlex.split(opt_value) if not native_flag_pattern.match(part)]
+        cleaned.append(f"{opt_name}={' '.join(parts)}")
+    return cleaned
+
+
+def _find_working_fortran_compiler(c: Context) -> tuple[str, str]:
+    """
+    Return (FC, OMPI_FC) suitable for build systems that require explicit Fortran.
+
+    On macOS/Homebrew OpenMPI, using mpi wrappers can require OMPI_FC to point to
+    the actual gfortran executable.
+    """
+    if platform.system() == "Darwin":
+        fc_candidates = ["mpifort", "mpif90", "gfortran"]
+    else:
+        fc_candidates = ["mpifort", "mpif90", "gfortran"]
+
+    for pattern in (
+        "/opt/homebrew/opt/gcc/bin/gfortran-*",
+        "/usr/local/opt/gcc/bin/gfortran-*",
+    ):
+        fc_candidates.extend(sorted(glob.glob(pattern), reverse=True))
+    for path_dir in os.environ.get("PATH", "").split(os.pathsep):
+        if not path_dir:
+            continue
+        fc_candidates.extend(sorted(glob.glob(os.path.join(path_dir, "gfortran-*")), reverse=True))
+
+    seen: set[str] = set()
+    ordered_candidates: list[str] = []
+    for candidate in fc_candidates:
+        if candidate and candidate not in seen:
+            ordered_candidates.append(candidate)
+            seen.add(candidate)
+
+    gfortran_fallback = ""
+    for candidate in ordered_candidates:
+        candidate_path = candidate if os.path.isabs(candidate) else shutil.which(candidate)
+        if not candidate_path:
+            continue
+        base = os.path.basename(candidate_path)
+        if base != "gfortran" and not base.startswith("gfortran-"):
+            continue
+        probe = c.run(f"{shlex.quote(candidate_path)} --version", hide=True, warn=True)
+        if probe is not None and not probe.failed:
+            gfortran_fallback = candidate_path
+            break
+
+    for candidate in ordered_candidates:
+        candidate_path = candidate if os.path.isabs(candidate) else shutil.which(candidate)
+        if not candidate_path:
+            continue
+        probe = c.run(f"{shlex.quote(candidate_path)} --version", hide=True, warn=True)
+        if probe is not None and not probe.failed:
+            ompi_fc = gfortran_fallback if platform.system() == "Darwin" else ""
+            return candidate_path, ompi_fc
+
+    raise Exit(
+        "No working Fortran compiler wrapper was found. "
+        "Please ensure OpenMPI Fortran wrappers (mpifort/mpif90) or gfortran are available."
+    )
+
+
 def _ensure_venv_exists() -> None:
     if not Path(VENV_DIR, "bin", "activate").is_file():
         raise Exit(
@@ -85,12 +174,52 @@ def create_venv(c: Context, python: str | None = None, force: bool = False) -> N
     """
     _platform_sanity_check()
 
-    if os.path.isdir(VENV_DIR):
-        if not force:
-            print(f"Virtualenv already exists at '{VENV_DIR}/'")
-            return
-        _task_screen_log(f"Removing existing virtualenv at '{VENV_DIR}/' …", color="yellow")
-        shutil.rmtree(VENV_DIR)
+    need_recreate = force
+    venv_python = Path(VENV_DIR, "bin", "python")
+    if os.path.isdir(VENV_DIR) and not force:
+        if not venv_python.is_file():
+            _task_screen_log(
+                f"Virtualenv exists at '{VENV_DIR}/' but is incomplete; recreating.",
+                color="yellow",
+            )
+            need_recreate = True
+        else:
+            venv_ver = c.run(
+                f"{shlex.quote(str(venv_python))} -c \"import sys; print(str(sys.version_info[0]) + '.' + str(sys.version_info[1]))\"",
+                hide=True,
+                warn=True,
+            )
+            if venv_ver is None or getattr(venv_ver, "failed", False):
+                _task_screen_log(
+                    f"Could not query Python version from '{venv_python}'; recreating virtualenv.",
+                    color="yellow",
+                )
+                need_recreate = True
+            else:
+                venv_major_minor = (getattr(venv_ver, "stdout", "") or "").strip()
+                try:
+                    vmaj, vmin = [int(x) for x in venv_major_minor.split(".")[:2]]
+                except Exception:
+                    vmaj, vmin = (0, 0)
+                if (vmaj, vmin) < (3, 10) or (vmaj, vmin) >= (3, 13):
+                    _task_screen_log(
+                        f"Existing virtualenv uses Python {vmaj}.{vmin}; recreating with Python 3.11/3.12 for Firedrake compatibility.",
+                        color="yellow",
+                    )
+                    need_recreate = True
+                else:
+                    # Self-heal toolchain in existing env (covers missing setuptools.build_meta errors)
+                    c.run(
+                        f"{shlex.quote(str(venv_python))} -m ensurepip --upgrade",
+                        hide=True,
+                        warn=True,
+                    )
+                    c.run(
+                        f"{_venv_activate_prefix()} {_pip_cache_exports()} python -m pip install --upgrade pip setuptools wheel",
+                        pty=True,
+                    )
+                    print(f"Virtualenv already exists at '{VENV_DIR}/'")
+                    return
 
     # Resolve default interpreter if not provided
     if not python:
@@ -143,6 +272,10 @@ def create_venv(c: Context, python: str | None = None, force: bool = False) -> N
                 f"Python {maj}.{minr} detected. Firedrake 2025.10.0 currently lacks prebuilt wheels (e.g., VTK) for >=3.13. "
                 "Please create the venv with Python 3.11 or 3.12 (e.g., --python python3.12)."
             )
+
+    if os.path.isdir(VENV_DIR) and need_recreate:
+        _task_screen_log(f"Removing existing virtualenv at '{VENV_DIR}/' …", color="yellow")
+        shutil.rmtree(VENV_DIR)
 
     _task_screen_log(f"Creating virtualenv in '{VENV_DIR}/' …")
     c.run(f"{python} -m venv {VENV_DIR}", pty=True)
@@ -396,6 +529,7 @@ def install_petsc(c):
     cfg_flags = shlex.split(cfg_stdout)
     if not cfg_flags:
         raise Exit("No PETSc configure options found.")
+    cfg_flags = _sanitize_petsc_optflags_for_macos(cfg_flags)
 
     # ------------------------------------------------------------------
     # Fix ScaLAPACK + Fortran mismatch on macOS:
@@ -575,9 +709,18 @@ def install_firedrake(c: Context, ref: str = "") -> None:
     prefix = _venv_activate_prefix()
     _task_screen_log("Installing Firedrake in the virtualenv …")
 
-    # Pin Cython < 3.1 in constraints.txt (Firedrake requirement)
-    c.run("echo 'Cython<3.1' > constraints.txt", echo=True)
+    # Pin build-time tooling in constraints.txt.
+    # - Cython<3.1 is required by Firedrake at this release.
+    # - setuptools<82 avoids a petsc4py build-time incompatibility:
+    #   confpetsc.py calls distutils.util.execute(..., dry_run=...), which
+    #   fails with setuptools 82+ where that kwarg is gone.
+    Path("constraints.txt").write_text(
+        "Cython<3.1\nsetuptools>=77.0.3,<82\n",
+        encoding="utf-8",
+    )
+    c.run("cat constraints.txt", echo=True)
     os.environ["PIP_CONSTRAINT"] = "constraints.txt"
+    os.environ["PIP_BUILD_CONSTRAINT"] = "constraints.txt"
 
     requested_ref = (ref or os.environ.get("FIREDRAKE_REF", "")).strip()
     if requested_ref and requested_ref.lower() != "latest":
@@ -589,16 +732,73 @@ def install_firedrake(c: Context, ref: str = "") -> None:
     # Configure shell environment exactly as firedrake-configure expects.
     # Use eval with quoting so values containing special chars are handled safely.
     setup_env = f'eval "$({prefix}python firedrake-configure --show-env)"'
+    extra_build_env: list[str] = []
+    if platform.system() == "Darwin":
+        # Force arm64 wheel/ext build to avoid universal2 host/target flag clashes.
+        extra_build_env.append("ARCHFLAGS='-arch arm64'")
+        fc, ompi_fc = _find_working_fortran_compiler(c)
+        extra_build_env.append(f"FC={shlex.quote(fc)}")
+        if ompi_fc:
+            extra_build_env.append(f"OMPI_FC={shlex.quote(ompi_fc)}")
+    build_env_prefix = " ".join(extra_build_env + [_pip_cache_exports()]).strip()
+    pip_constraint_opts = "-c constraints.txt"
+    has_build_constraint = c.run(
+        f"{prefix} python -m pip help install | grep -q -- '--build-constraint'",
+        hide=True,
+        warn=True,
+    )
+    if has_build_constraint is not None and not has_build_constraint.failed:
+        pip_constraint_opts += " --build-constraint constraints.txt"
 
     # Standard install command from documentation:
     # pip install --no-binary h5py 'firedrake[check]'
     install_cmd = (
-        f"{prefix}{setup_env} && {_pip_cache_exports()} "
-        f"python -m pip install --no-binary h5py '{firedrake_spec}'"
+        f"{prefix}{setup_env} && {build_env_prefix} "
+        f"python -m pip install {pip_constraint_opts} --no-binary h5py '{firedrake_spec}'"
     )
 
     _task_screen_log("Running pip install for Firedrake (standard PyPI install) …")
     res = c.run(install_cmd, pty=True, echo=True, warn=True)
+
+    # If build isolation selects an incompatible setuptools for petsc4py,
+    # retry in the active venv with pinned build tooling.
+    if res is None or getattr(res, "failed", False):
+        _task_screen_log(
+            "Standard install failed. Retrying with pinned build tooling and --no-build-isolation …",
+            color="yellow",
+        )
+
+        # Keep setuptools below the known incompatible release for petsc4py build scripts.
+        c.run(
+            f"{prefix} {_pip_cache_exports()} python -m pip install {pip_constraint_opts} "
+            "'setuptools>=77.0.3,<82' 'Cython<3.1' wheel",
+            pty=True,
+            echo=True,
+            warn=True,
+        )
+
+        # Pre-install key native build dependencies and petsc4py in the active venv.
+        c.run(
+            f"{prefix}{setup_env} && {build_env_prefix} "
+            f"python -m pip install {pip_constraint_opts} "
+            "pkgconfig pybind11 numpy mpi4py petsctools 'rtree>=1.2' libsupermesh",
+            pty=True,
+            echo=True,
+            warn=True,
+        )
+        c.run(
+            f"{prefix}{setup_env} && {build_env_prefix} "
+            f"python -m pip install {pip_constraint_opts} --no-build-isolation 'petsc4py==3.24.0'",
+            pty=True,
+            echo=True,
+            warn=True,
+        )
+
+        retry_cmd = (
+            f"{prefix}{setup_env} && {build_env_prefix} "
+            f"python -m pip install {pip_constraint_opts} --no-build-isolation --no-binary h5py '{firedrake_spec}'"
+        )
+        res = c.run(retry_cmd, pty=True, echo=True, warn=True)
 
     # If PyPI failed (e.g. version mismatch with PETSc), try fallbacks
     if res is None or getattr(res, "failed", False):
@@ -614,22 +814,23 @@ def install_firedrake(c: Context, ref: str = "") -> None:
             )
             _task_screen_log(f"Trying GitHub tarball for tag {requested_ref}…", color="yellow")
             cmd_url = (
-                f"{prefix}{setup_env} && {_pip_cache_exports()} "
-                f"python -m pip install --no-binary h5py 'firedrake[check]@{tarball_url}'"
+                f"{prefix}{setup_env} && {build_env_prefix} "
+                f"python -m pip install {pip_constraint_opts} --no-binary h5py 'firedrake[check]@{tarball_url}'"
             )
             c.run(cmd_url, pty=True, echo=True)
         else:
             # Fallback for latest: try GitHub default branch
             _task_screen_log("Trying Firedrake from GitHub default branch…", color="yellow")
             cmd_git = (
-                f"{prefix}{setup_env} && {_pip_cache_exports()} "
-                "python -m pip install --no-binary h5py "
+                f"{prefix}{setup_env} && {build_env_prefix} "
+                f"python -m pip install {pip_constraint_opts} --no-binary h5py "
                 "'firedrake[check] @ git+https://github.com/firedrakeproject/firedrake.git'"
             )
             c.run(cmd_git, pty=True, echo=True)
 
     # Clean up constraint file
     os.environ.pop("PIP_CONSTRAINT", None)
+    os.environ.pop("PIP_BUILD_CONSTRAINT", None)
 
     print("\nVerifying the installation …")
     # Ensure immutabledict is present (sometimes missed by dependencies)
