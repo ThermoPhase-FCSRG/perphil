@@ -163,7 +163,7 @@ jobs:
         with:
           path: |
             petsc-${{ steps.petsc.outputs.version }}
-          key: ${{ runner.os }}-petsc-${{ steps.petsc.outputs.version }}-${{ steps.petsc-cfg.outputs.hash }}
+          key: ${{ runner.os }}-petsc-${{ steps.petsc.outputs.version }}-${{ steps.petsc-cfg.outputs.hash }}-${{ hashFiles('tasks.py') }}
 
       - name: Cache ccache store
         id: cache-ccache
