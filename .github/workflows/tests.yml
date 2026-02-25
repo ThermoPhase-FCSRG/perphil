@@ -2,6 +2,12 @@ name: Tests and Coverage
 
 on:
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
+      - unlabeled
   push:
     branches:
       - main
@@ -87,7 +93,7 @@ jobs:
 
   tests-native:
     name: Tests (native install, macOS)
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'native job')
     runs-on: macos-latest
     env:
       # Pin the Firedrake release used for CI to ensure deterministic installs
