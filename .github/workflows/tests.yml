@@ -34,7 +34,7 @@ jobs:
       - name: Locate Python interpreter with Firedrake
         id: firedrake-python
         run: |
-          set -euo pipefail
+          set -eu
           find_python_with_firedrake() {
             for py in \
               python \
