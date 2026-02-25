@@ -42,6 +42,37 @@ def _venv_activate_prefix() -> str:
     return f"source {VENV_DIR}/bin/activate && "
 
 
+def _runtime_cache_exports(disable_loopy_cache: bool = False) -> str:
+    """
+    Return shell exports for runtime cache configuration.
+
+    We keep runtime caches inside the repository to avoid permission issues
+    with user-level cache directories in constrained/CI environments.
+    """
+    cache_root = Path(".cache/perphil-runtime/xdg").resolve()
+    cache_root.mkdir(parents=True, exist_ok=True)
+    exports = [f"XDG_CACHE_HOME={shlex.quote(str(cache_root))}"]
+    if disable_loopy_cache:
+        exports.append("LOOPY_NO_CACHE=1")
+    return " ".join(exports)
+
+
+def _pip_cache_exports() -> str:
+    """
+    Return shell exports for pip cache directory.
+    """
+    pip_cache = Path(".cache/pip").resolve()
+    pip_cache.mkdir(parents=True, exist_ok=True)
+    return f"PIP_CACHE_DIR={shlex.quote(str(pip_cache))}"
+
+
+def _ensure_venv_exists() -> None:
+    if not Path(VENV_DIR, "bin", "activate").is_file():
+        raise Exit(
+            f"Virtualenv '{VENV_DIR}/' not found. Run 'inv create-venv' (or setup-firedrake) first."
+        )
+
+
 @task(
     help={
         "python": "Python interpreter to use for the venv (e.g., python3.12). Defaults to the active interpreter (sys.executable).",
@@ -115,17 +146,23 @@ def create_venv(c: Context, python: str | None = None, force: bool = False) -> N
 
     _task_screen_log(f"Creating virtualenv in '{VENV_DIR}/' …")
     c.run(f"{python} -m venv {VENV_DIR}", pty=True)
-    c.run(f"{_venv_activate_prefix()} pip install --upgrade pip setuptools wheel", pty=True)
+    c.run(
+        f"{_venv_activate_prefix()} {_pip_cache_exports()} python -m pip install --upgrade pip setuptools wheel",
+        pty=True,
+    )
     _task_screen_log("✔ Virtualenv created.", color="yellow")
 
 
 @task(pre=[create_venv])
 def install_deps(c):
     """
-    Install all Python dependencies listed in requirements.txt into the venv.
+    Install Python dependencies from pyproject.toml into the venv.
     """
     _task_screen_log("Installing Python dependencies for perphil …")
-    c.run(f"{_venv_activate_prefix()} pip install -e '.[dev]'", pty=True)
+    c.run(
+        f"{_venv_activate_prefix()} {_pip_cache_exports()} python -m pip install --no-build-isolation -e '.[dev]'",
+        pty=True,
+    )
     _task_screen_log("✔ Python-level dependencies installed.", color="yellow")
 
 
@@ -466,14 +503,16 @@ def install_firedrake(c: Context, ref: str = "") -> None:
     else:
         firedrake_spec = "firedrake[check]"
 
-    # Construct the command to set environment variables and install Firedrake
-    # We use `eval $(python firedrake-configure --show-env)` to set CC, CXX, PETSC_DIR, PETSC_ARCH, etc.
-    # This ensures we use the exact configuration that firedrake-configure expects.
-    setup_env = f"export $({prefix} python firedrake-configure --show-env)"
+    # Configure shell environment exactly as firedrake-configure expects.
+    # Use eval with quoting so values containing special chars are handled safely.
+    setup_env = f'eval "$({prefix}python firedrake-configure --show-env)"'
 
     # Standard install command from documentation:
     # pip install --no-binary h5py 'firedrake[check]'
-    install_cmd = f"{prefix} {setup_env} && pip install --no-binary h5py '{firedrake_spec}'"
+    install_cmd = (
+        f"{prefix}{setup_env} && {_pip_cache_exports()} "
+        f"python -m pip install --no-binary h5py '{firedrake_spec}'"
+    )
 
     _task_screen_log("Running pip install for Firedrake (standard PyPI install) …")
     res = c.run(install_cmd, pty=True, echo=True, warn=True)
@@ -491,12 +530,19 @@ def install_firedrake(c: Context, ref: str = "") -> None:
                 f"{requested_ref}.tar.gz"
             )
             _task_screen_log(f"Trying GitHub tarball for tag {requested_ref}…", color="yellow")
-            cmd_url = f"{prefix} {setup_env} && pip install --no-binary h5py 'firedrake[check]@{tarball_url}'"
+            cmd_url = (
+                f"{prefix}{setup_env} && {_pip_cache_exports()} "
+                f"python -m pip install --no-binary h5py 'firedrake[check]@{tarball_url}'"
+            )
             c.run(cmd_url, pty=True, echo=True)
         else:
             # Fallback for latest: try GitHub default branch
             _task_screen_log("Trying Firedrake from GitHub default branch…", color="yellow")
-            cmd_git = f"{prefix} {setup_env} && pip install --no-binary h5py 'firedrake[check] @ git+https://github.com/firedrakeproject/firedrake.git'"
+            cmd_git = (
+                f"{prefix}{setup_env} && {_pip_cache_exports()} "
+                "python -m pip install --no-binary h5py "
+                "'firedrake[check] @ git+https://github.com/firedrakeproject/firedrake.git'"
+            )
             c.run(cmd_git, pty=True, echo=True)
 
     # Clean up constraint file
@@ -507,7 +553,11 @@ def install_firedrake(c: Context, ref: str = "") -> None:
     res_immut = c.run(f"{prefix} python -c 'import immutabledict'", hide=True, warn=True)
     if res_immut is None or getattr(res_immut, "failed", False):
         _task_screen_log("Installing missing dependency: immutabledict …", color="yellow")
-        c.run(f"{prefix} pip install immutabledict", pty=True, echo=True)
+        c.run(
+            f"{prefix} {_pip_cache_exports()} python -m pip install immutabledict",
+            pty=True,
+            echo=True,
+        )
 
     try:
         # Run checks. We unset PETSC_DIR/ARCH to ensure the installed package finds them itself (or via baked-in paths)
@@ -518,7 +568,10 @@ def install_firedrake(c: Context, ref: str = "") -> None:
 
         # Note: The previous task unset them. Let's try running with the configured env to be safe,
         # as that's how we installed it.
-        check_cmd = f"{prefix} {setup_env} && OMP_NUM_THREADS=1 firedrake-check"
+        check_cmd = (
+            f"{prefix}{setup_env} && {_runtime_cache_exports(disable_loopy_cache=True)} "
+            "OMP_NUM_THREADS=1 firedrake-check"
+        )
 
         c.run(check_cmd, echo=True, pty=True)
         _task_screen_log("✔ Firedrake installed successfully.", color="green")
@@ -607,28 +660,35 @@ def clean(c):
     Remove the virtualenv, PETSc build directory, and any downloaded scripts.
     """
     _task_screen_log("Cleaning installation artifacts")
-    # Remove any petsc-* directories:
-    if any(name.startswith("petsc-") and os.path.isdir(name) for name in os.listdir(".")):
-        print("Removing any 'petsc-*' directories …")
-        c.run("rm -rf petsc-*", echo=True)
-        c.run("pip uninstall -y petsc4py", echo=True)
-        c.run("pip cache remove petsc4py", echo=True)
+
+    # Remove the virtualenv first. This avoids modifying any global Python installation.
+    if os.path.isdir(VENV_DIR):
+        _task_screen_log(f"Removing '{VENV_DIR}/' …", color="yellow")
+        shutil.rmtree(VENV_DIR)
+
+    # Remove any petsc-* directories.
+    for petsc_dir in sorted(Path(".").glob("petsc-*")):
+        if petsc_dir.is_dir():
+            _task_screen_log(f"Removing '{petsc_dir}' …", color="yellow")
+            shutil.rmtree(petsc_dir)
 
     # Remove petsc symlink
     if os.path.islink("petsc"):
         print("Removing 'petsc' symlink …")
         os.remove("petsc")
 
-    # Remove firedrake-configure script if present:
-    for fname in ["firedrake-configure"]:
+    # Remove generated helper files, if present.
+    for fname in ["firedrake-configure", "constraints.txt"]:
         if os.path.isfile(fname):
             print(f"Removing '{fname}' …")
-            c.run(f"rm -f {fname}", echo=True)
+            os.remove(fname)
 
-    # Uninstall any leftover Python packages:
-    c.run("pip cache remove firedrake", echo=True)
-    c.run("pip uninstall -y h5py mpi4py", echo=True)
-    c.run("pip cache purge", echo=True)
+    # Remove local runtime cache used by tests/install checks.
+    runtime_cache_dir = Path(".cache/perphil-runtime")
+    if runtime_cache_dir.exists():
+        _task_screen_log(f"Removing '{runtime_cache_dir}' …", color="yellow")
+        shutil.rmtree(runtime_cache_dir)
+
     _task_screen_log("✔ Cleanup complete.", color="yellow")
 
 
@@ -724,9 +784,13 @@ def dev_install(ctx):
     """
     Install perphil in the virtual environment.
     """
-    task_output_message = "Installing perphil in the active environment"
+    _ensure_venv_exists()
+    task_output_message = "Installing perphil in the virtual environment"
     _task_screen_log(task_output_message)
-    base_command = 'pip install -e ".[dev]"'
+    base_command = (
+        f"{_venv_activate_prefix()} {_pip_cache_exports()} "
+        'python -m pip install --no-build-isolation -e ".[dev]"'
+    )
     host_system = _HOST_SYSTEM
     if host_system not in _SUPPORTED_SYSTEMS:
         raise Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
@@ -745,7 +809,6 @@ def dev_install(ctx):
         "record_output": "Record all the pytest CLI output to pytest-coverage.txt file",
     },
     optional=["numprocess"],
-    pre=[hooks],
 )
 def tests(
     ctx,
@@ -804,8 +867,11 @@ def tests(
     if host_system not in _SUPPORTED_SYSTEMS:
         raise Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
     pty_flag = True if host_system != "Windows" else False
-    # Avoid inheriting PETSc env vars that can confuse petsctools/petsc4py
-    full_cmd = f"env -u PETSC_DIR -u PETSC_ARCH {base_command}"
+    # Avoid inheriting PETSc vars and force deterministic cache behavior for Firedrake/Loopy.
+    full_cmd = (
+        f"env -u PETSC_DIR -u PETSC_ARCH {_runtime_cache_exports(disable_loopy_cache=True)} "
+        f"{base_command}"
+    )
     _task_screen_log(f"Running: {full_cmd}", color="yellow", bold=False)
     ctx.run(full_cmd, pty=pty_flag)
 
@@ -858,8 +924,11 @@ def tests_ipynb(
     if host_system not in _SUPPORTED_SYSTEMS:
         raise Exit(f"{_PACKAGE_NAME} is running on unsupported operating system", code=1)
     pty_flag = True if host_system != "Windows" else False
-    # Avoid inheriting PETSc env vars that can confuse petsctools/petsc4py
-    full_cmd = f"env -u PETSC_DIR -u PETSC_ARCH {base_command}"
+    # Avoid inheriting PETSc vars and force deterministic cache behavior for Firedrake/Loopy.
+    full_cmd = (
+        f"env -u PETSC_DIR -u PETSC_ARCH {_runtime_cache_exports(disable_loopy_cache=True)} "
+        f"{base_command}"
+    )
     _task_screen_log(f"Running: {full_cmd}", color="yellow", bold=False)
     ctx.run(full_cmd, pty=pty_flag)
 

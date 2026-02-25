@@ -158,6 +158,8 @@ jobs:
       - name: Run tests with coverage
         env:
           COVERAGE_RCFILE: pyproject.toml
+          LOOPY_NO_CACHE: "1"
+          XDG_CACHE_HOME: ${{ github.workspace }}/.cache/perphil-runtime/xdg
         run: |
           source .venv/bin/activate
           python -m pip install -e '.[dev]'
