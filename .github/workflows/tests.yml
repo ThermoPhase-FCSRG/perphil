@@ -19,12 +19,95 @@ permissions:
 
 jobs:
   tests:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ['3.12', '3.13']
+    name: Tests (Firedrake container)
+    runs-on: ubuntu-latest
+    container:
+      image: firedrakeproject/firedrake-vanilla-default:latest
+    env:
+      CI: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Locate Python interpreter with Firedrake
+        id: firedrake-python
+        run: |
+          set -euo pipefail
+          find_python_with_firedrake() {
+            for py in \
+              python \
+              /home/firedrake/firedrake/bin/python \
+              /usr/local/bin/python \
+              /opt/conda/bin/python; do
+              if command -v "$py" >/dev/null 2>&1 || [ -x "$py" ]; then
+                if "$py" -c "import firedrake" >/dev/null 2>&1; then
+                  echo "$py"
+                  return 0
+                fi
+              fi
+            done
+            return 1
+          }
+
+          PYTHON_BIN="$(find_python_with_firedrake || true)"
+          if [ -z "$PYTHON_BIN" ]; then
+            echo "Could not find a Python interpreter with Firedrake preinstalled."
+            exit 1
+          fi
+          echo "python=$PYTHON_BIN" >> "$GITHUB_OUTPUT"
+          "$PYTHON_BIN" -c "import firedrake; print('Using Firedrake', firedrake.__version__)"
+
+      - name: Create CI virtualenv on top of Firedrake runtime
+        run: |
+          ${{ steps.firedrake-python.outputs.python }} -m venv .venv-ci --system-site-packages
+          .venv-ci/bin/python -m pip install --upgrade pip
+          .venv-ci/bin/python -m pip install -e '.[dev]'
+          .venv-ci/bin/python -c "import firedrake; print('Validated Firedrake inside CI venv')"
+
+      - name: Run tests with coverage
+        env:
+          COVERAGE_RCFILE: pyproject.toml
+          LOOPY_NO_CACHE: "1"
+          XDG_CACHE_HOME: ${{ github.workspace }}/.cache/perphil-runtime/xdg
+        run: |
+          mkdir -p "${XDG_CACHE_HOME}"
+          .venv-ci/bin/python -m pytest --cov=src/perphil --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml-container
+          path: coverage.xml
+
+      - name: Upload Coverage PR comment
+        if: github.event_name == 'pull_request'
+        uses: py-cov-action/python-coverage-comment-action@v3
+        with:
+          GITHUB_TOKEN: ${{ github.token }}
+          ANNOTATE_MISSING_LINES: true
+          ANNOTATION_TYPE: error
+
+      - name: Coverage default-branch data (badge/dashboard)
+        if: (github.ref == 'refs/heads/main') && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        uses: py-cov-action/python-coverage-comment-action@v3
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COVERAGE_DATA_BRANCH: python-coverage-comment-action-data
+
+      - name: Check diff coverage
+        if: github.event_name == 'pull_request'
+        run: |
+          # Ensure we have the base branch locally for comparison
+          git fetch --no-tags --prune --depth=100 origin +refs/heads/${{ github.event.pull_request.base.ref }}:refs/remotes/origin/${{ github.event.pull_request.base.ref }}
+          .venv-ci/bin/python -m diff_cover.diff_cover_tool coverage.xml --compare-branch origin/${{ github.event.pull_request.base.ref }} --fail-under 1
+
+  tests-native:
+    name: Tests (native install, macOS)
+    if: github.event_name != 'pull_request'
+    runs-on: macos-latest
     env:
       # Pin the Firedrake release used for CI to ensure deterministic installs
       FIREDRAKE_REF: "2025.10.2"
@@ -39,7 +122,7 @@ jobs:
         id: setup-python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -54,26 +137,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install invoke rich
 
-      - name: Install build accelerators (ccache) [Linux]
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ccache
-          echo "/usr/lib/ccache" >> $GITHUB_PATH
-
-      - name: Install build accelerators (ccache) [macOS]
-        if: runner.os == 'macOS'
+      - name: Install build accelerators (ccache)
         run: |
           brew update
           brew install ccache || true
           # Expose ccache's libexec wrappers on PATH (optional; CC/CXX use ccache anyway)
           echo "$(brew --prefix)/opt/ccache/libexec" >> $GITHUB_PATH
-
-      - name: Set up fallback Python 3.12 for venv (when matrix is 3.13)
-        if: matrix.python-version == '3.13'
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
 
       - name: Download firedrake-configure (for PETSc version discovery)
         env:
@@ -125,26 +194,19 @@ jobs:
 
       - name: Install core system packages for Firedrake/PETSc
         run: |
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            sudo apt-get update
-          fi
           inv install-system-packages
 
       - name: Create virtual environment (if cache missed)
         run: |
           if [ ! -d .venv ]; then
-            if [ "${{ matrix.python-version }}" = "3.13" ]; then
-              python3.12 -m venv .venv
-            else
-              python -m venv .venv
-            fi
+            python -m venv .venv
           fi
 
       - name: Build or reuse PETSc via Invoke (uses .venv)
         env:
           CC: "ccache mpicc"
           CXX: "ccache mpicxx"
-          FC: ${{ runner.os == 'macOS' && 'mpifort' || 'mpif90' }}
+          FC: "mpifort"
         run: |
           mkdir -p ~/.ccache
           inv install-petsc
@@ -170,28 +232,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-xml
+          name: coverage-xml-native
           path: coverage.xml
-
-      - name: Upload Coverage PR comment
-        if: github.event_name == 'pull_request' && runner.os == 'Linux' && matrix.python-version == '3.12'
-        uses: py-cov-action/python-coverage-comment-action@v3
-        with:
-          GITHUB_TOKEN: ${{ github.token }}
-          ANNOTATE_MISSING_LINES: true
-          ANNOTATION_TYPE: error
-
-      - name: Coverage default-branch data (badge/dashboard)
-        if: (github.ref == 'refs/heads/main') && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_run') && runner.os == 'Linux' && matrix.python-version == '3.12'
-        uses: py-cov-action/python-coverage-comment-action@v3
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COVERAGE_DATA_BRANCH: python-coverage-comment-action-data
-
-      - name: Check diff coverage
-        if: github.event_name == 'pull_request' && runner.os == 'Linux' && matrix.python-version == '3.12'
-        run: |
-          source .venv/bin/activate
-          # Ensure we have the base branch locally for comparison
-          git fetch --no-tags --prune --depth=100 origin +refs/heads/${{ github.event.pull_request.base.ref }}:refs/remotes/origin/${{ github.event.pull_request.base.ref }}
-          diff-cover coverage.xml --compare-branch origin/${{ github.event.pull_request.base.ref }} --fail-under 1
