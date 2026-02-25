@@ -21,9 +21,8 @@ jobs:
   tests:
     name: Tests (Firedrake container)
     runs-on: ubuntu-latest
-    container:
-      image: firedrakeproject/firedrake-vanilla-default:latest
     env:
+      FIREDRAKE_IMAGE: "firedrakeproject/firedrake-vanilla-default:latest"
       CI: "true"
     steps:
       - name: Checkout
@@ -31,49 +30,29 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Locate Python interpreter with Firedrake
-        id: firedrake-python
+      - name: Pull Firedrake Docker image
         run: |
-          set -eu
-          find_python_with_firedrake() {
-            for py in \
-              python \
-              /home/firedrake/firedrake/bin/python \
-              /usr/local/bin/python \
-              /opt/conda/bin/python; do
-              if command -v "$py" >/dev/null 2>&1 || [ -x "$py" ]; then
-                if "$py" -c "import firedrake" >/dev/null 2>&1; then
-                  echo "$py"
-                  return 0
-                fi
-              fi
-            done
-            return 1
-          }
-
-          PYTHON_BIN="$(find_python_with_firedrake || true)"
-          if [ -z "$PYTHON_BIN" ]; then
-            echo "Could not find a Python interpreter with Firedrake preinstalled."
-            exit 1
-          fi
-          echo "python=$PYTHON_BIN" >> "$GITHUB_OUTPUT"
-          "$PYTHON_BIN" -c "import firedrake; print('Using Firedrake', firedrake.__version__)"
-
-      - name: Create CI virtualenv on top of Firedrake runtime
-        run: |
-          ${{ steps.firedrake-python.outputs.python }} -m venv .venv-ci --system-site-packages
-          .venv-ci/bin/python -m pip install --upgrade pip
-          .venv-ci/bin/python -m pip install -e '.[dev]'
-          .venv-ci/bin/python -c "import firedrake; print('Validated Firedrake inside CI venv')"
+          docker pull "${FIREDRAKE_IMAGE}"
 
       - name: Run tests with coverage
         env:
           COVERAGE_RCFILE: pyproject.toml
           LOOPY_NO_CACHE: "1"
-          XDG_CACHE_HOME: ${{ github.workspace }}/.cache/perphil-runtime/xdg
+          XDG_CACHE_HOME: /home/firedrake/work/.cache/perphil-runtime/xdg
+          PIP_CACHE_DIR: /home/firedrake/work/.cache/pip
         run: |
-          mkdir -p "${XDG_CACHE_HOME}"
-          .venv-ci/bin/python -m pytest --cov=src/perphil --cov-report=xml --cov-report=term-missing
+          mkdir -p "${GITHUB_WORKSPACE}/.cache/perphil-runtime/xdg"
+          mkdir -p "${GITHUB_WORKSPACE}/.cache/pip"
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/home/firedrake/work" \
+            -w /home/firedrake/work \
+            -e CI="${CI}" \
+            -e COVERAGE_RCFILE="${COVERAGE_RCFILE}" \
+            -e LOOPY_NO_CACHE="${LOOPY_NO_CACHE}" \
+            -e XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
+            -e PIP_CACHE_DIR="${PIP_CACHE_DIR}" \
+            "${FIREDRAKE_IMAGE}" \
+            /bin/bash -lc 'python -c "import firedrake; print(\"Using Firedrake\", firedrake.__version__)" && python -m pip install -e ".[dev]" && python -m pytest --cov=src/perphil --cov-report=xml --cov-report=term-missing'
 
       - name: Upload coverage artifact
         if: always()
@@ -100,9 +79,11 @@ jobs:
       - name: Check diff coverage
         if: github.event_name == 'pull_request'
         run: |
+          python3 -m pip install --user diff-cover
+          export PATH="$HOME/.local/bin:$PATH"
           # Ensure we have the base branch locally for comparison
           git fetch --no-tags --prune --depth=100 origin +refs/heads/${{ github.event.pull_request.base.ref }}:refs/remotes/origin/${{ github.event.pull_request.base.ref }}
-          .venv-ci/bin/python -m diff_cover.diff_cover_tool coverage.xml --compare-branch origin/${{ github.event.pull_request.base.ref }} --fail-under 1
+          diff-cover coverage.xml --compare-branch origin/${{ github.event.pull_request.base.ref }} --fail-under 1
 
   tests-native:
     name: Tests (native install, macOS)
