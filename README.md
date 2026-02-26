@@ -127,8 +127,8 @@ inv run_hooks --all-files
 
 ## Troubleshooting
 
-- “firedrake not found”: confirm you ran `inv install_petsc` then `inv install_firedrake` and that you are in `.venv`.
-- Long compile times: prefer Ubuntu 22.04; ensure MPI toolchain and compilers are installed (`inv install_system_packages`).
+- “firedrake not found”: confirm you ran `inv install-petsc` then `inv install-firedrake` and that you are in `.venv`.
+- Long compile times: prefer Ubuntu 22.04; ensure MPI toolchain and compilers are installed (`inv install-system-packages`).
 - Matplotlib mathtext issues: use raw strings for LaTeX-like labels, e.g., `r"$\\log_{10}(h)$"` in notebooks.
 
 ## License
