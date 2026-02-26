@@ -189,6 +189,58 @@ def _find_working_fortran_compiler(c: Context) -> tuple[str, str]:
     )
 
 
+def _find_working_bison(c: Context) -> str:
+    """
+    Return a GNU Bison executable path with version >= 3, or empty string if unavailable.
+
+    On macOS this prefers Homebrew's keg-only bison path when present.
+    """
+    candidates: list[str] = []
+    env_bison = os.environ.get("BISON", "").strip()
+    if env_bison:
+        candidates.append(env_bison)
+    candidates.extend(
+        [
+            "bison",
+            "/opt/homebrew/opt/bison/bin/bison",
+            "/usr/local/opt/bison/bin/bison",
+        ]
+    )
+
+    brew_prefix = c.run("brew --prefix bison", hide=True, warn=True)
+    if brew_prefix is not None and not brew_prefix.failed:
+        prefix = (brew_prefix.stdout or "").strip()
+        if prefix:
+            candidates.append(os.path.join(prefix, "bin", "bison"))
+
+    seen: set[str] = set()
+    ordered_candidates: list[str] = []
+    for candidate in candidates:
+        if candidate and candidate not in seen:
+            ordered_candidates.append(candidate)
+            seen.add(candidate)
+
+    for candidate in ordered_candidates:
+        candidate_path = candidate if os.path.isabs(candidate) else shutil.which(candidate)
+        if not candidate_path:
+            continue
+
+        probe = c.run(f"{shlex.quote(candidate_path)} --version", hide=True, warn=True)
+        if probe is None or probe.failed:
+            continue
+
+        first_line = (probe.stdout or "").splitlines()
+        version_line = first_line[0] if first_line else ""
+        match = re.search(r"GNU Bison\)?\s+(\d+)\.(\d+)", version_line)
+        if not match:
+            continue
+        major, minor = int(match.group(1)), int(match.group(2))
+        if (major, minor) >= (3, 0):
+            return candidate_path
+
+    return ""
+
+
 def _ensure_venv_exists() -> None:
     if not Path(VENV_DIR, "bin", "activate").is_file():
         raise Exit(
@@ -483,7 +535,9 @@ def install_system_packages(c):
 
     elif system == "Darwin":
         # macOS needs gcc (which provides gfortran) for OpenMPI to have Fortran support
-        all_pkgs = base_pkgs + ["gcc"]
+        # Also install modern bison (keg-only via Homebrew) so PETSc does not have
+        # to build bison from source, which can stall on newer macOS releases.
+        all_pkgs = list(dict.fromkeys(base_pkgs + ["gcc", "bison"]))
 
         missing = []
         for pkg in all_pkgs:
@@ -581,6 +635,34 @@ def install_petsc(c):
     if not cfg_flags:
         raise Exit("No PETSc configure options found.")
     cfg_flags = _sanitize_petsc_optflags_for_macos(cfg_flags)
+
+    # Prefer system GNU Bison on macOS instead of PETSc's source build path.
+    # This avoids long/hanging "Running configure on BISON" failures.
+    download_bison_requested = any(
+        flag == "--download-bison" or flag.startswith("--download-bison=") for flag in cfg_flags
+    )
+    if platform.system() == "Darwin" and download_bison_requested:
+        bison_exec = _find_working_bison(c)
+        if not bison_exec:
+            raise Exit(
+                "PETSc requested '--download-bison', but no GNU Bison >= 3 was found. "
+                "Install it with 'brew install bison' (or run 'inv install-system-packages') "
+                "and retry."
+            )
+        cfg_flags = [
+            flag
+            for flag in cfg_flags
+            if not (
+                flag == "--download-bison"
+                or flag.startswith("--download-bison=")
+                or flag.startswith("--with-bison-exec=")
+            )
+        ]
+        cfg_flags.append(f"--with-bison-exec={bison_exec}")
+        _task_screen_log(
+            f"Using system Bison at '{bison_exec}' instead of '--download-bison'.",
+            color="yellow",
+        )
 
     # ------------------------------------------------------------------
     # Fix ScaLAPACK + Fortran mismatch on macOS:
@@ -688,19 +770,38 @@ def install_petsc(c):
                         break
 
             if not fc:
-                raise Exit(
-                    "PETSc requested Fortran bindings, but no working Fortran compiler wrapper was found. "
-                    "Tried: "
-                    + ", ".join(ordered_candidates)
-                    + ". Please ensure OpenMPI Fortran wrappers are installed (e.g. mpifort) "
-                    "or that a working gfortran/gfortran-<version> is available on PATH."
-                )
-            compiler_args.append(f"FC={fc}")
-            if ompi_fc_env:
-                _task_screen_log(
-                    f"Using OMPI_FC fallback with {ompi_fc_env} for OpenMPI Fortran wrappers.",
-                    color="yellow",
-                )
+                # On macOS, if Fortran is unavailable and ScaLAPACK was requested,
+                # disable ScaLAPACK and Fortran bindings as a fallback instead of failing.
+                if platform.system() == "Darwin" and has_scalapack:
+                    _task_screen_log(
+                        "No Fortran compiler found on macOS; disabling ScaLAPACK and Fortran bindings.",
+                        color="yellow",
+                    )
+                    # Rebuild cfg_flags: remove ScaLAPACK and Fortran bindings
+                    cfg_flags = [
+                        f
+                        for f in cfg_flags
+                        if not any(keyword in f for keyword in ["scalapack", "fortran-bindings"])
+                    ]
+                    # Explicitly disable Fortran bindings
+                    cfg_flags.append("--with-fortran-bindings=0")
+                    fortran_requested = False
+                    cfg_joined = " ".join(shlex.quote(flag) for flag in cfg_flags)
+                else:
+                    raise Exit(
+                        "PETSc requested Fortran bindings, but no working Fortran compiler wrapper was found. "
+                        "Tried: "
+                        + ", ".join(ordered_candidates)
+                        + ". Please ensure OpenMPI Fortran wrappers are installed (e.g. mpifort) "
+                        "or that a working gfortran/gfortran-<version> is available on PATH."
+                    )
+            else:
+                compiler_args.append(f"FC={fc}")
+                if ompi_fc_env:
+                    _task_screen_log(
+                        f"Using OMPI_FC fallback with {ompi_fc_env} for OpenMPI Fortran wrappers.",
+                        color="yellow",
+                    )
 
         # Build configure command with compilers as arguments (not env vars)
         # IMPORTANT: PETSc's configure script ignores CC/CXX/FC environment variables and
