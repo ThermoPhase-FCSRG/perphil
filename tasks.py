@@ -785,7 +785,6 @@ def install_petsc(c):
                     ]
                     # Explicitly disable Fortran bindings
                     cfg_flags.append("--with-fortran-bindings=0")
-                    fortran_requested = False
                     cfg_joined = " ".join(shlex.quote(flag) for flag in cfg_flags)
                 else:
                     raise Exit(
