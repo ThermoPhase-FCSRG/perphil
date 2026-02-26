@@ -2,6 +2,12 @@ name: Tests and Coverage
 
 on:
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
+      - unlabeled
   push:
     branches:
       - main
@@ -19,7 +25,80 @@ permissions:
 
 jobs:
   tests:
+    name: Tests (Firedrake container)
     runs-on: ubuntu-latest
+    env:
+      FIREDRAKE_IMAGE: "firedrakeproject/firedrake-vanilla-default:latest"
+      CI: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Pull Firedrake Docker image
+        run: |
+          docker pull "${FIREDRAKE_IMAGE}"
+
+      - name: Run tests with coverage
+        env:
+          COVERAGE_RCFILE: pyproject.toml
+          LOOPY_NO_CACHE: "1"
+          XDG_CACHE_HOME: /home/firedrake/work/.cache/perphil-runtime/xdg
+          PIP_CACHE_DIR: /home/firedrake/work/.cache/pip
+        run: |
+          mkdir -p "${GITHUB_WORKSPACE}/.cache/perphil-runtime/xdg"
+          mkdir -p "${GITHUB_WORKSPACE}/.cache/pip"
+          docker run --rm \
+            -v "${GITHUB_WORKSPACE}:/home/firedrake/work" \
+            -w /home/firedrake/work \
+            -e CI="${CI}" \
+            -e COVERAGE_RCFILE="${COVERAGE_RCFILE}" \
+            -e LOOPY_NO_CACHE="${LOOPY_NO_CACHE}" \
+            -e XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
+            -e PIP_CACHE_DIR="${PIP_CACHE_DIR}" \
+            "${FIREDRAKE_IMAGE}" \
+            /bin/bash -lc 'PYBIN="$(command -v python3 || command -v python || true)"; if [ -z "$PYBIN" ]; then echo "No python interpreter found in image PATH=$PATH"; ls -l /usr/bin/python* /usr/local/bin/python* 2>/dev/null || true; exit 127; fi; "$PYBIN" -c "import firedrake; print(\"Using Firedrake\", firedrake.__version__)"; "$PYBIN" -m pip install -e ".[dev]"; "$PYBIN" -m pytest --cov=src/perphil --cov-report=xml --cov-report=term-missing'
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml-container
+          path: coverage.xml
+
+      - name: Upload Coverage PR comment
+        if: github.event_name == 'pull_request'
+        uses: py-cov-action/python-coverage-comment-action@v3
+        with:
+          GITHUB_TOKEN: ${{ github.token }}
+          ANNOTATE_MISSING_LINES: true
+          ANNOTATION_TYPE: error
+
+      - name: Coverage default-branch data (badge/dashboard)
+        if: (github.ref == 'refs/heads/main') && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        uses: py-cov-action/python-coverage-comment-action@v3
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COVERAGE_DATA_BRANCH: python-coverage-comment-action-data
+
+      - name: Check diff coverage
+        if: github.event_name == 'pull_request'
+        run: |
+          python3 -m pip install --user diff-cover
+          export PATH="$HOME/.local/bin:$PATH"
+          # Ensure we have the base branch locally for comparison
+          git fetch --no-tags --prune --depth=100 origin +refs/heads/${{ github.event.pull_request.base.ref }}:refs/remotes/origin/${{ github.event.pull_request.base.ref }}
+          diff-cover coverage.xml --compare-branch origin/${{ github.event.pull_request.base.ref }} --fail-under 1
+
+  tests-native:
+    name: Tests (native install, macOS)
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'native job')
+    runs-on: macos-latest
+    env:
+      # Pin the Firedrake release used for CI to ensure deterministic installs
+      FIREDRAKE_REF: "2025.10.2"
+      CI: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -30,7 +109,7 @@ jobs:
         id: setup-python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.10'
+          python-version: "3.12"
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -47,30 +126,35 @@ jobs:
 
       - name: Install build accelerators (ccache)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ccache
-          echo "/usr/lib/ccache" >> $GITHUB_PATH
+          brew update
+          brew install ccache || true
+          # Expose ccache's libexec wrappers on PATH (optional; CC/CXX use ccache anyway)
+          echo "$(brew --prefix)/opt/ccache/libexec" >> $GITHUB_PATH
 
       - name: Download firedrake-configure (for PETSc version discovery)
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          inv download-firedrake-configure
+          inv download-firedrake-configure --ref=${{ env.FIREDRAKE_REF }}
 
       - name: Determine PETSc version required by Firedrake
         id: petsc
         run: |
-          VER=$(python3 firedrake-configure --show-petsc-version)
+          VER=$(python firedrake-configure --show-petsc-version)
           echo "version=$VER" >> "$GITHUB_OUTPUT"
 
       - name: Hash PETSc configure options
         id: petsc-cfg
         run: |
-          CFG=$(python3 firedrake-configure --show-petsc-configure-options)
+          CFG=$(python firedrake-configure --show-petsc-configure-options)
           # Normalize whitespace to stabilize hash
           CFG_NORM=$(echo "$CFG" | tr -s ' \n' ' ')
           echo "$CFG_NORM" > petsc_configure_flags.txt
-          HASH=$(echo -n "$CFG_NORM" | sha256sum | cut -d ' ' -f1)
+          if command -v sha256sum >/dev/null 2>&1; then
+            HASH=$(printf "%s" "$CFG_NORM" | sha256sum | cut -d ' ' -f1)
+          else
+            HASH=$(printf "%s" "$CFG_NORM" | shasum -a 256 | cut -d ' ' -f1)
+          fi
           echo "hash=$HASH" >> "$GITHUB_OUTPUT"
 
       - name: Cache PETSc build directory
@@ -79,7 +163,7 @@ jobs:
         with:
           path: |
             petsc-${{ steps.petsc.outputs.version }}
-          key: ${{ runner.os }}-petsc-${{ steps.petsc.outputs.version }}-${{ steps.petsc-cfg.outputs.hash }}
+          key: ${{ runner.os }}-petsc-${{ steps.petsc.outputs.version }}-${{ steps.petsc-cfg.outputs.hash }}-${{ hashFiles('tasks.py') }}
 
       - name: Cache ccache store
         id: cache-ccache
@@ -97,57 +181,43 @@ jobs:
 
       - name: Install core system packages for Firedrake/PETSc
         run: |
-          sudo apt-get update
           inv install-system-packages
 
       - name: Create virtual environment (if cache missed)
         run: |
           if [ ! -d .venv ]; then
-            python3 -m venv .venv
+            python -m venv .venv
           fi
 
-      - name: Install Firedrake and PETSc via Invoke tasks (uses .venv)
+      - name: Build or reuse PETSc via Invoke (uses .venv)
+        env:
+          CC: "ccache mpicc"
+          CXX: "ccache mpicxx"
+          FC: "mpifort"
+        run: |
+          mkdir -p ~/.ccache
+          inv install-petsc
+
+      - name: Install Firedrake (pinned) via Invoke (uses .venv)
         env:
           CC: "ccache mpicc"
           CXX: "ccache mpicxx"
         run: |
-          mkdir -p ~/.ccache
-          inv install-firedrake
+          inv install-firedrake --ref=${{ env.FIREDRAKE_REF }}
 
       - name: Run tests with coverage
         env:
           COVERAGE_RCFILE: pyproject.toml
+          LOOPY_NO_CACHE: "1"
+          XDG_CACHE_HOME: ${{ github.workspace }}/.cache/perphil-runtime/xdg
         run: |
           source .venv/bin/activate
           python -m pip install -e '.[dev]'
-          pytest --cov=src/perphil --cov-report=xml --cov-report=term-missing
+          env -u PETSC_DIR -u PETSC_ARCH pytest --cov=src/perphil --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-xml
+          name: coverage-xml-native
           path: coverage.xml
-
-      - name: Upload Coverage PR comment
-        if: github.event_name == 'pull_request'
-        uses: py-cov-action/python-coverage-comment-action@v3
-        with:
-          GITHUB_TOKEN: ${{ github.token }}
-          ANNOTATE_MISSING_LINES: true
-          ANNOTATION_TYPE: error
-
-      - name: Coverage default-branch data (badge/dashboard)
-        if: (github.ref == 'refs/heads/main') && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_run')
-        uses: py-cov-action/python-coverage-comment-action@v3
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COVERAGE_DATA_BRANCH: python-coverage-comment-action-data
-
-      - name: Check diff coverage
-        if: github.event_name == 'pull_request'
-        run: |
-          source .venv/bin/activate
-          # Ensure we have the base branch locally for comparison
-          git fetch --no-tags --prune --depth=100 origin +refs/heads/${{ github.event.pull_request.base.ref }}:refs/remotes/origin/${{ github.event.pull_request.base.ref }}
-          diff-cover coverage.xml --compare-branch origin/${{ github.event.pull_request.base.ref }} --fail-under 1
