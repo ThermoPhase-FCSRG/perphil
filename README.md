@@ -30,15 +30,15 @@
 | src/perphil/solvers/\_tests/test\_conditioning.py          |       37 |        0 |    100% |           |
 | src/perphil/solvers/\_tests/test\_solver.py                |       32 |        0 |    100% |           |
 | src/perphil/solvers/\_tests/test\_solver\_parameters.py    |       18 |        0 |    100% |           |
-| src/perphil/solvers/conditioning.py                        |       80 |       37 |     54% |139, 153, 156-218 |
+| src/perphil/solvers/conditioning.py                        |       73 |       37 |     49% |139, 153, 156-218 |
 | src/perphil/solvers/parameters.py                          |       14 |        0 |    100% |           |
-| src/perphil/solvers/solver.py                              |       37 |        1 |     97% |       113 |
+| src/perphil/solvers/solver.py                              |       34 |        1 |     97% |       113 |
 | src/perphil/utils/\_\_init\_\_.py                          |        0 |        0 |    100% |           |
 | src/perphil/utils/\_tests/test\_manufactured\_solutions.py |       22 |        0 |    100% |           |
 | src/perphil/utils/manufactured\_solutions.py               |       44 |       15 |     66% |     72-94 |
 | src/perphil/utils/plotting.py                              |       22 |       22 |      0% |      1-75 |
 | src/perphil/utils/postprocessing.py                        |       36 |       36 |      0% |     1-124 |
-|                                                  **TOTAL** | **1295** |  **608** | **53%** |           |
+| **TOTAL**                                                  | **1285** |  **608** | **53%** |           |
 
 
 ## Setup coverage badge
