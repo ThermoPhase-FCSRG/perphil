@@ -8,7 +8,7 @@ import sys
 import platform
 from invoke import task
 from invoke.context import Context
-from invoke.exceptions import Exit
+from invoke.exceptions import Exit, ThreadException
 from rich import print
 
 _PACKAGE_NAME = "perphil"
@@ -27,6 +27,40 @@ def _task_screen_log(message: str, bold: bool = True, color: str = "blue") -> No
     """
     rich_delimiters = f"bold {color}" if bold else f"{color}"
     print(f"[{rich_delimiters}]{message}[/{rich_delimiters}]")
+
+
+def _run(c: Context, command: str, pty: bool = False, **kwargs):
+    """
+    Wrapper around invoke Context.run with optional PTY fallback.
+
+    Some environments (CI containers, restricted shells) may not provide PTY
+    devices. In that case, retry non-interactively so tasks remain usable.
+    """
+    if not pty:
+        return c.run(command, **kwargs)
+    try:
+        return c.run(command, pty=True, **kwargs)
+    except (OSError, ThreadException) as exc:
+        # Handle both direct OSError and ThreadException wrapping OSError
+        is_pty_error = False
+        if isinstance(exc, OSError):
+            # Errno 5 (EIO) often indicates PTY problems (input/output error)
+            is_pty_error = "pty" in str(exc).lower() or exc.errno == 5
+        elif isinstance(exc, ThreadException):
+            # Check if the ThreadException wraps an OSError with errno 5
+            exc_str = str(exc).lower()
+            if "keyboardinterrupt" in exc_str:
+                raise
+            is_pty_error = "pty" in exc_str or "errno 5" in exc_str or "entrada/saída" in exc_str
+
+        if not is_pty_error:
+            raise
+        _task_screen_log(
+            "PTY unavailable for this command; retrying without PTY.",
+            color="yellow",
+            bold=False,
+        )
+        return c.run(command, pty=False, **kwargs)
 
 
 def _platform_sanity_check() -> None:
@@ -214,7 +248,8 @@ def create_venv(c: Context, python: str | None = None, force: bool = False) -> N
                         hide=True,
                         warn=True,
                     )
-                    c.run(
+                    _run(
+                        c,
                         f"{_venv_activate_prefix()} {_pip_cache_exports()} python -m pip install --upgrade pip setuptools wheel",
                         pty=True,
                     )
@@ -278,8 +313,9 @@ def create_venv(c: Context, python: str | None = None, force: bool = False) -> N
         shutil.rmtree(VENV_DIR)
 
     _task_screen_log(f"Creating virtualenv in '{VENV_DIR}/' …")
-    c.run(f"{python} -m venv {VENV_DIR}", pty=True)
-    c.run(
+    _run(c, f"{python} -m venv {VENV_DIR}", pty=True)
+    _run(
+        c,
         f"{_venv_activate_prefix()} {_pip_cache_exports()} python -m pip install --upgrade pip setuptools wheel",
         pty=True,
     )
@@ -292,7 +328,8 @@ def install_deps(c):
     Install Python dependencies from pyproject.toml into the venv.
     """
     _task_screen_log("Installing Python dependencies for perphil …")
-    c.run(
+    _run(
+        c,
         f"{_venv_activate_prefix()} {_pip_cache_exports()} python -m pip install --no-build-isolation -e '.[dev]'",
         pty=True,
     )
@@ -316,13 +353,19 @@ def download_firedrake_configure(c: Context, ref: str = "", force: bool = False)
     """
     # Detect requested reference (CLI arg takes precedence over env)
     requested_ref = (ref or os.environ.get("FIREDRAKE_REF", "")).strip()
+    requested_is_latest = not requested_ref or requested_ref.lower() == "latest"
 
-    # 0) If file already exists and not forcing, keep it (avoid network flakiness in CI)
-    if os.path.isfile("firedrake-configure") and not force:
+    # 0) If file already exists and not forcing, keep it unless a specific ref was requested.
+    if os.path.isfile("firedrake-configure") and not force and requested_is_latest:
         _task_screen_log("Found existing firedrake-configure; skipping download.", color="green")
         # Ensure it's executable
         c.run("chmod +x firedrake-configure", warn=True)
         return
+    if os.path.isfile("firedrake-configure") and not force and not requested_is_latest:
+        _task_screen_log(
+            f"Explicit ref '{requested_ref}' requested; refreshing firedrake-configure.",
+            color="yellow",
+        )
 
     # Build curl headers (GitHub API can be picky/rate-limited)
     gh_token = os.environ.get("GITHUB_TOKEN", "").strip()
@@ -399,13 +442,19 @@ def install_system_packages(c):
     plus ensure OpenMPI development headers are present on Linux.
     If a package is already installed, skip it.
     """
+    _ensure_venv_exists()
     system = platform.system()
+    prefix = _venv_activate_prefix()
     # 1) ask firedrake-configure which packages it wants
-    result = c.run("python firedrake-configure --show-system-packages", hide=True, warn=True)
-    if result.failed:
+    result = c.run(
+        f"{prefix} python firedrake-configure --show-system-packages",
+        hide=True,
+        warn=True,
+    )
+    if result is None or getattr(result, "failed", False):
         raise Exit("Failed to query `firedrake-configure --show-system-packages`")
 
-    base_pkgs = result.stdout.strip().split()
+    base_pkgs = (getattr(result, "stdout", "") or "").strip().split()
     if system == "Linux":
         # Ensure Fortran compiler is available for MPI Fortran support
         all_pkgs = base_pkgs + ["libopenmpi-dev", "openmpi-bin", "gfortran"]
@@ -423,7 +472,8 @@ def install_system_packages(c):
             _task_screen_log("Detected Linux. Installing missing system packages via apt …")
             # Update and install only the missing ones
             pkgs_str = " ".join(missing)
-            c.run(
+            _run(
+                c,
                 f'sudo sh -c "apt update && apt install -y {pkgs_str}"',
                 pty=True,
             )
@@ -448,7 +498,8 @@ def install_system_packages(c):
             # First update Homebrew
             c.run("brew update", echo=True)
             pkgs_str = " ".join(missing)
-            c.run(
+            _run(
+                c,
                 f"brew install {pkgs_str}",
                 pty=True,
             )
@@ -476,7 +527,7 @@ def install_petsc(c):
         hide=True,
         warn=True,
         echo=True,
-        pty=True,
+        pty=False,
     )
     petsc_version = result.stdout.strip()
     if not petsc_version:
@@ -524,7 +575,7 @@ def install_petsc(c):
         hide=True,
         warn=True,
         echo=True,
-        pty=True,
+        pty=False,
     ).stdout.strip()
     cfg_flags = shlex.split(cfg_stdout)
     if not cfg_flags:
@@ -663,7 +714,7 @@ def install_petsc(c):
             f"{prefix_down} env -u PETSC_ARCH -u CC -u CXX -u FC{ompi_fc_assignment} PETSC_DIR=$PWD ./configure "
             f"{compiler_joined} {cfg_joined}"
         )
-        c.run(cmd, echo=True, pty=True)
+        _run(c, cmd, echo=True, pty=False)
         # Build PETSc
         print("Building PETSc (this may take a long time) …")
         make_prefix = f"OMPI_FC={shlex.quote(ompi_fc_env)} " if ompi_fc_env else ""
@@ -695,13 +746,7 @@ def install_petsc(c):
     )
 
 
-@task(
-    pre=[install_petsc],
-    help={
-        "ref": "Firedrake version to install via pip (e.g., 2025.10.0). Defaults to 'latest' or FIREDRAKE_REF env.",
-    },
-)
-def install_firedrake(c: Context, ref: str = "") -> None:
+def _install_firedrake_python_package(c: Context, ref: str = "") -> None:
     """
     Install the Firedrake Python package (with [check]) inside the venv via pip.
     We use the environment variables from firedrake-configure to ensure it links against our custom PETSc.
@@ -709,18 +754,23 @@ def install_firedrake(c: Context, ref: str = "") -> None:
     prefix = _venv_activate_prefix()
     _task_screen_log("Installing Firedrake in the virtualenv …")
 
-    # Pin build-time tooling in constraints.txt.
-    # - Cython<3.1 is required by Firedrake at this release.
-    # - setuptools<82 avoids a petsc4py build-time incompatibility:
+    # Pin build-time tooling in constraints.txt per Firedrake docs:
+    # https://www.firedrakeproject.org/install.html
+    # - setuptools<81 avoids a petsc4py build-time incompatibility:
     #   confpetsc.py calls distutils.util.execute(..., dry_run=...), which
-    #   fails with setuptools 82+ where that kwarg is gone.
+    #   fails with setuptools 81+ where that kwarg is gone.
+    # - Cython is needed for building Firedrake from source (not mentioned in docs
+    #   but required for package metadata generation)
     Path("constraints.txt").write_text(
-        "Cython<3.1\nsetuptools>=77.0.3,<82\n",
+        "setuptools<81\nCython\n",
         encoding="utf-8",
     )
     c.run("cat constraints.txt", echo=True)
+    # Set PIP_CONSTRAINT as the gentler default.
+    # Do NOT set PIP_BUILD_CONSTRAINT as a global environment variable, since it conflicts
+    # with --no-build-isolation. Instead, use --build-constraint via pip_constraint_opts
+    # only when build isolation is active (checked below).
     os.environ["PIP_CONSTRAINT"] = "constraints.txt"
-    os.environ["PIP_BUILD_CONSTRAINT"] = "constraints.txt"
 
     requested_ref = (ref or os.environ.get("FIREDRAKE_REF", "")).strip()
     if requested_ref and requested_ref.lower() != "latest":
@@ -732,6 +782,9 @@ def install_firedrake(c: Context, ref: str = "") -> None:
     # Configure shell environment exactly as firedrake-configure expects.
     # Use eval with quoting so values containing special chars are handled safely.
     setup_env = f'eval "$({prefix}python firedrake-configure --show-env)"'
+    # Explicitly set compiler environment variables for build isolation
+    os.environ["CC"] = "mpicc"
+    os.environ["CXX"] = "mpicxx"
     extra_build_env: list[str] = []
     if platform.system() == "Darwin":
         # Force arm64 wheel/ext build to avoid universal2 host/target flag clashes.
@@ -742,6 +795,8 @@ def install_firedrake(c: Context, ref: str = "") -> None:
             extra_build_env.append(f"OMPI_FC={shlex.quote(ompi_fc)}")
     build_env_prefix = " ".join(extra_build_env + [_pip_cache_exports()]).strip()
     pip_constraint_opts = "-c constraints.txt"
+    # --build-constraint is only for build-time isolation; incompatible with --no-build-isolation
+    pip_constraint_only = "-c constraints.txt"
     has_build_constraint = c.run(
         f"{prefix} python -m pip help install | grep -q -- '--build-constraint'",
         hide=True,
@@ -758,7 +813,7 @@ def install_firedrake(c: Context, ref: str = "") -> None:
     )
 
     _task_screen_log("Running pip install for Firedrake (standard PyPI install) …")
-    res = c.run(install_cmd, pty=True, echo=True, warn=True)
+    res = _run(c, install_cmd, pty=True, echo=True, warn=True)
 
     # If build isolation selects an incompatible setuptools for petsc4py,
     # retry in the active venv with pinned build tooling.
@@ -768,27 +823,30 @@ def install_firedrake(c: Context, ref: str = "") -> None:
             color="yellow",
         )
 
-        # Keep setuptools below the known incompatible release for petsc4py build scripts.
-        c.run(
-            f"{prefix} {_pip_cache_exports()} python -m pip install {pip_constraint_opts} "
-            "'setuptools>=77.0.3,<82' 'Cython<3.1' wheel",
+        # Constraint file already enforces setuptools<81 for petsc4py compatibility.
+        _run(
+            c,
+            f"{prefix} {_pip_cache_exports()} python -m pip install {pip_constraint_only} wheel",
             pty=True,
             echo=True,
             warn=True,
         )
 
         # Pre-install key native build dependencies and petsc4py in the active venv.
-        c.run(
+        # Cython is required for firedrake's setup.py to generate package metadata.
+        _run(
+            c,
             f"{prefix}{setup_env} && {build_env_prefix} "
-            f"python -m pip install {pip_constraint_opts} "
-            "pkgconfig pybind11 numpy mpi4py petsctools 'rtree>=1.2' libsupermesh",
+            f"python -m pip install {pip_constraint_only} "
+            "Cython pkgconfig pybind11 numpy mpi4py petsctools 'rtree>=1.2' libsupermesh",
             pty=True,
             echo=True,
             warn=True,
         )
-        c.run(
+        _run(
+            c,
             f"{prefix}{setup_env} && {build_env_prefix} "
-            f"python -m pip install {pip_constraint_opts} --no-build-isolation 'petsc4py==3.24.0'",
+            f"python -m pip install {pip_constraint_only} --no-build-isolation 'petsc4py==3.24.0'",
             pty=True,
             echo=True,
             warn=True,
@@ -796,9 +854,9 @@ def install_firedrake(c: Context, ref: str = "") -> None:
 
         retry_cmd = (
             f"{prefix}{setup_env} && {build_env_prefix} "
-            f"python -m pip install {pip_constraint_opts} --no-build-isolation --no-binary h5py '{firedrake_spec}'"
+            f"python -m pip install {pip_constraint_opts} --no-binary h5py '{firedrake_spec}'"
         )
-        res = c.run(retry_cmd, pty=True, echo=True, warn=True)
+        res = _run(c, retry_cmd, pty=True, echo=True, warn=True)
 
     # If PyPI failed (e.g. version mismatch with PETSc), try fallbacks
     if res is None or getattr(res, "failed", False):
@@ -817,7 +875,7 @@ def install_firedrake(c: Context, ref: str = "") -> None:
                 f"{prefix}{setup_env} && {build_env_prefix} "
                 f"python -m pip install {pip_constraint_opts} --no-binary h5py 'firedrake[check]@{tarball_url}'"
             )
-            c.run(cmd_url, pty=True, echo=True)
+            _run(c, cmd_url, pty=True, echo=True)
         else:
             # Fallback for latest: try GitHub default branch
             _task_screen_log("Trying Firedrake from GitHub default branch…", color="yellow")
@@ -826,18 +884,18 @@ def install_firedrake(c: Context, ref: str = "") -> None:
                 f"python -m pip install {pip_constraint_opts} --no-binary h5py "
                 "'firedrake[check] @ git+https://github.com/firedrakeproject/firedrake.git'"
             )
-            c.run(cmd_git, pty=True, echo=True)
+            _run(c, cmd_git, pty=True, echo=True)
 
     # Clean up constraint file
     os.environ.pop("PIP_CONSTRAINT", None)
-    os.environ.pop("PIP_BUILD_CONSTRAINT", None)
 
     print("\nVerifying the installation …")
     # Ensure immutabledict is present (sometimes missed by dependencies)
     res_immut = c.run(f"{prefix} python -c 'import immutabledict'", hide=True, warn=True)
     if res_immut is None or getattr(res_immut, "failed", False):
         _task_screen_log("Installing missing dependency: immutabledict …", color="yellow")
-        c.run(
+        _run(
+            c,
             f"{prefix} {_pip_cache_exports()} python -m pip install immutabledict",
             pty=True,
             echo=True,
@@ -857,10 +915,28 @@ def install_firedrake(c: Context, ref: str = "") -> None:
             "OMP_NUM_THREADS=1 firedrake-check"
         )
 
-        c.run(check_cmd, echo=True, pty=True)
+        _run(c, check_cmd, echo=True, pty=True)
         _task_screen_log("✔ Firedrake installed successfully.", color="green")
     except Exception as e:
         raise Exit(f"Failed to verify Firedrake installation: {e}")
+
+
+@task(
+    help={
+        "ref": "Firedrake version to install via pip (e.g., 2025.10.0). Defaults to 'latest' or FIREDRAKE_REF env.",
+    },
+)
+def install_firedrake(c: Context, ref: str = "") -> None:
+    """
+    End-to-end Firedrake setup honoring an optional pinned release ref.
+    """
+    # Use task bodies directly to avoid Invoke pre-task recursion with default args.
+    create_venv.body(c)
+    install_deps.body(c)
+    download_firedrake_configure.body(c, ref=ref)
+    install_system_packages.body(c)
+    install_petsc.body(c)
+    _install_firedrake_python_package(c, ref=ref)
 
 
 @task(
@@ -929,13 +1005,14 @@ def setup_firedrake(
                 break
 
     # Ensure we use the chosen Python and a clean venv if forcing
-    create_venv(c, python=chosen_python, force=force)
-    install_deps(c)
+    # Use task bodies directly to keep this orchestration deterministic.
+    create_venv.body(c, python=chosen_python, force=force)
+    install_deps.body(c)
     # Ensure we use the same ref for both the configure script and pip install
-    download_firedrake_configure(c, ref=ref, force=force)
-    install_system_packages(c)
-    install_petsc(c)
-    install_firedrake(c, ref=ref)
+    download_firedrake_configure.body(c, ref=ref, force=force)
+    install_system_packages.body(c)
+    install_petsc.body(c)
+    _install_firedrake_python_package(c, ref=ref)
 
 
 @task
